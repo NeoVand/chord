@@ -9,11 +9,11 @@ export default defineConfig({
 	use: {
 		baseURL: 'http://127.0.0.1:5197',
 		viewport: { width: 1440, height: 1000 },
-		// Hosted runners have no physical GPU. Full Chromium plus explicit
-		// SwiftShader provides the same WebGL fallback used by unsupported devices.
-		channel: process.env.CI ? 'chromium' : undefined,
-		launchOptions: { args: ['--mute-audio', ...(process.env.CI ? ['--use-gl=angle', '--use-angle=swiftshader-webgl', '--enable-unsafe-swiftshader'] : [])] },
-		trace: process.env.CI ? 'retain-on-failure' : 'off',
+		// Use Playwright's headless shell. Recording continuous screenshots for
+		// traces overwhelms software graphics on hosted runners; retain failure
+		// screenshots and the accessibility snapshot instead.
+		launchOptions: { args: ['--mute-audio'] },
+		trace: 'off',
 		screenshot: 'only-on-failure'
 	},
 	webServer: {
