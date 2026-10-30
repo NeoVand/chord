@@ -1,0 +1,38 @@
+{
+  "generator": "Built-in image_gen",
+  "type": "UI concept images; not an implemented application",
+  "recommended": "04-explorer",
+  "files": [
+    {
+      "id": "01-studio",
+      "title": "Studio",
+      "path": "/Users/neo/repos/chord/design/concepts/01-studio.png"
+    },
+    {
+      "id": "02-gallery",
+      "title": "Gallery",
+      "path": "/Users/neo/repos/chord/design/concepts/02-gallery.png"
+    },
+    {
+      "id": "03-immersive",
+      "title": "Immersive",
+      "path": "/Users/neo/repos/chord/design/concepts/03-immersive.png"
+    },
+    {
+      "id": "04-explorer",
+      "title": "Explorer",
+      "path": "/Users/neo/repos/chord/design/concepts/04-explorer.png"
+    }
+  ],
+  "prompts": [
+    "prompts.json",
+    "explorer-prompt.json"
+  ],
+  "notes": [
+    "Image-generated key labels, minor-ring spellings, and curve geometry are illustrative; implementation must use source music data and computed trajectories.",
+    "Preserve MIDI Lab keyboard mappings and shared note state across keyboard, chord pads, wheel, traces, and axes.",
+    "Hold sustains selected notes. Freeze and Visual speed affect only the plot.",
+    "MIDI Lab's master spectrum analyser cannot isolate notes for XYZ; choose per-voice taps or explicit ideal-tone visual mode.",
+    "Circle of fifths and harmony utilities already exist in MIDI Lab. Scale selection and persistent Hold require integration."
+  ]
+}

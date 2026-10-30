@@ -1,0 +1,52 @@
+# chord
+
+A playable oscilloscope for notes, intervals, and chords. Waveforms become two-dimensional Lissajous curves or three-dimensional trajectories. Built with Svelte 5, SvelteKit 3, TypeScript, Web Audio, and Three.js WebGPU.
+
+## Run
+
+```sh
+pnpm install
+pnpm dev
+pnpm check
+pnpm exec vitest run
+pnpm build
+pnpm exec playwright test
+```
+
+The page starts with a labelled, silent sine-wave preview. Playing a key or chord starts audio through a user gesture. Sampled instruments download their recordings on first use; the local synth plays while loading and remains available if a download fails.
+
+## Playing and inspecting
+
+- **Instrument / Pure tones** changes both the sound and the captured signal. Instrument retains the selected sampled or synthesized voice, including its harmonics. Pure tones substitutes sine oscillators at the same pitches. Pure tones does not change equal temperament into just intonation.
+- **Sampled / Synth** chooses the instrument engine. The 128 General MIDI sample programs use smplr; synthesized voices use MIDI Lab's 16 family presets with dual oscillators, detuning, velocity-sensitive filter envelopes, and amplitude envelopes. Programs in the same synth family share a timbre.
+- **Latch** keeps notes selected after release; recorded instruments still decay naturally. Adding or removing a latched note with the computer or on-screen keyboard replays the selected notes together, so an older, decayed piano voice cannot flatten an axis when building a chord. Momentary playing and MIDI keep their normal note envelopes. Selecting a chord replaces the previous chord. Stop sound clears the held keys while keeping the last completed capture available for inspection; the status explicitly says sound has stopped. Changing sound source while stopped clears that retained capture. A connected MIDI sustain pedal can still send its normal CC64 messages.
+- **Follow sound** starts enabled. The sweep and automatic orbit move only while the actual master output is audible; the highlight and miniature scopes fade with its measured envelope. Natural sample endings and mute stop motion even when notes remain latched. Turn it off for **Free run**, which animates the captured shape in silence. The complete path stays available in both modes.
+- **Sweep speed** controls a glowing highlight traveling over a fixed, complete path, from 2 to 200 seconds per sweep (20 seconds by default). Waveforms stay stationary. **Tail length** changes only the highlight, never the underlying curve.
+- **Freeze** pauses the highlight, miniature scopes, and automatic orbit independently of sound. It stays paused across view, chord, and source changes until Resume is pressed; a newly selected sound is captured in that paused state. The camera can still be moved. **Recapture** explicitly replaces an instrument's held waveform with a new complete audio window.
+- Scroll or pinch to zoom up to **128×** in every view; zoom follows the pointer. **Fit** (or double-clicking the canvas) centers the actual curve while preserving the viewing direction. **Reset rotation** restores the 3D starting direction while preserving magnification. Drag to orbit in 3D, Shift-drag/right-drag to pan. Drag pans in 2D and waveform views. Each view retains its own camera, and changing notes never resets zoom. Automatic orbit starts off.
+- **Waveform / 2D / 3D** selects a time plot, a two-note XY plot, or a three-note XYZ plot. This choice always persists through chord, interval, and keyboard input. Insufficient notes produce a prompt instead of silently changing views. Larger keyboard combinations can sound; the parametric plot explicitly identifies its first two or three plotted voices.
+- The circle of fifths, scale selector, chord pads, interval presets, piano, and connected MIDI inputs all feed the same note state.
+
+Computer keys follow MIDI Lab: `A W S E D F T G Y H U J K O L P ; '` play chromatically; `Z` / `X` shift the octave. Musical shortcuts are suppressed while typing, navigating the circle, or using dialogs and focused controls. `Cmd/Ctrl + .` stops sound. Circle navigation keeps its curved keyboard focus indicator; mouse input does not show a rectangular focus box.
+
+## Signal path
+
+Each voice routes through its own mono bus to both the master audio output and an eight-channel merger. An AudioWorklet captures all channels on one sample clock, with frame-exact voice IDs and versions. Changing an instrument or replacing a temporary synth with a loaded sample starts a new capture version, so the plot never silently replays the old timbre under the new label.
+
+The plot reads the actual PCM with linear interpolation, including the pure sine engine. After a 45 ms onset allowance, it waits for a complete aligned window, copies it, and commits its geometry and one common display gain together. This preserves relative axis amplitudes without a growing trace or automatic gain/zoom animation. The capture stays immutable as the two-second input ring buffer wraps. Selecting new notes or an instrument takes a new capture; Recapture samples a later moment, useful for evolving timbres and envelopes. Mini waveforms use the same immutable snapshot. Queued old-engine blocks are rejected on switching. The silent opening preview is the only analytically generated curve.
+
+Parametric paths contain 131,072 source points over 24 fundamental cycles, bounded to 20–750 ms; waveform lanes show four cycles with 32,768 source points. These are complete **finite trajectories**: equal-tempered intervals generally do not close exactly, so the renderer never invents an endpoint connection. Interpolating captured PCM increases drawing resolution without claiming additional audio bandwidth.
+
+The spectrum comes from the real master output through audioMotion. The parametric axes come from individual voices, rather than attempting to recover notes from a mixed spectrum. Stereo sampled voices are summed to mono for their individual axes. Master volume and limiting are applied after the per-note capture. Follow sound uses a short RMS window after volume and limiting, with attack/release smoothing and silence hysteresis. It follows the audible envelope while retaining the immutable curve; it does not continuously replace the path with evolving audio. Latched chord edits share one scheduled attack time, including already-loaded samples, and invalidate the prior voice generations.
+
+Three.js uses WebGPU and falls back to WebGL2 where WebGPU is unavailable. The application reports the active backend. Bounded-error polyline simplification adapts GPU tessellation to the zoom level while retaining the full-resolution path. Geometry uploads occur only on capture/view/zoom-detail changes, not every animation frame. TSL fragment shaders animate the highlight with sweep, tail, and activity uniforms; cumulative arc length gives it an even speed around parametric curves. Restrained screen-space halos and normal alpha blending prevent additive whiteout at intersections. Orthographic cameras make deep zoom magnify the shape without flying through it. The miniature scopes scroll a two-cycle window around a synchronized probe at 30 fps. Inverting arc length back to source time keeps them aligned with the main highlight; peak measurements stay cached by capture identity.
+
+## Source and extension points
+
+MIDI Lab supplied the keyboard interaction and geometry, voice selector, circle-of-fifths geometry and musical data, audioMotion configuration, GM program map, sample-loading strategy, and subtractive synth presets/voice design. Components are adapted to Chord's shared state instead of importing MIDI Lab's course or transport system.
+
+Audio lives in `src/lib/audio/`, musical data in `src/lib/music/`, and captured-signal rendering in `src/lib/visualization/`. `src/lib/types.ts` defines their boundary. The OP-XY replica's per-voice SourceGraph engines are a future adapter at the audio voice output boundary; its engines, LFO controls, and effects panel are not included in this first version.
+
+The selected UI concept and other generated directions are saved in `design/concepts/`.
+
+The interface uses a true-black canvas and neutral grayscale surfaces. Cyan, coral, and violet connect the animated curve highlight, individual waveforms, note labels, and selected piano keys; cyan identifies the selected chord. The complete parametric path stays neutral so its colored moving highlight stands out. Consistent Lucide icons through `@lucide/svelte` include the Audio Waveform brand mark and favicon.
