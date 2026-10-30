@@ -3,7 +3,7 @@
  * isolated voice players so the oscilloscope can capture each note separately.
  * Source: NeoVand/midilab/src/lib/audio/gm.svelte.ts.
  */
-import { Soundfont, Sampler, getSoundfontNames, type SampleLoader, type SmplrPreset, type Smplr } from 'smplr';
+import { Soundfont, getSoundfontNames, type SampleLoader, type SmplrPreset, type Smplr } from 'smplr';
 import { GM_PROGRAMS } from './programs';
 
 const RENAMED: Record<string, string> = {
@@ -65,20 +65,6 @@ export class SampleBank {
 			seed.dispose();
 			sink.disconnect();
 		}
-	}
-
-	async player(program: number, destination: AudioNode): Promise<Smplr> {
-		const asset = await this.load(program);
-		if (this.#disposed) throw new Error('Audio engine was disposed');
-		const loader: SampleLoader = { async load() { return asset.buffers; } };
-		const player = Sampler(this.context, { preset: asset.preset, destination, loader });
-		// Same soundfont gain as smplr Soundfont (and therefore MIDI Lab).
-		const gain = this.context.createGain();
-		gain.gain.value = 5;
-		player.output.addInsert(gain);
-		await player.ready;
-		if (this.#disposed) { player.dispose(); throw new Error('Audio engine was disposed'); }
-		return player;
 	}
 
 	dispose() {

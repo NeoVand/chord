@@ -1,6 +1,17 @@
 # chord
 
-A playable oscilloscope for notes, intervals, and chords. Waveforms become two-dimensional Lissajous curves or three-dimensional trajectories. Built with Svelte 5, SvelteKit 3, TypeScript, Web Audio, and Three.js WebGPU.
+A playable instrument for exploring harmony through sound and geometry. Four connected workspaces share one keyboard, instrument, selected notes, and tuning. Built with Svelte 5, SvelteKit 3, TypeScript, Web Audio, and Three.js WebGPU.
+
+[Play Chord](https://neovand.github.io/chord/) · [Architecture and design decisions](docs/architecture.md)
+
+## Four views, one instrument
+
+- **Overtones** places measured spectral peaks on a log-frequency spiral: one turn per octave. Select a nearby pair to inspect its frequency difference, slow its beat animation, and align the peaks by retuning a voice.
+- **Tuning** plots an estimated sensory-roughness surface. Drag the surface to tune notes two and three; drag outside it to orbit. Sliders provide the same controls. Equal and Just are explicit tuning references. The landscape depends on the captured timbre and is not a score for musical quality.
+- **Chords** is a playable Tonnetz of fifths and thirds. Major/minor triangles, parallel/relative/leading-tone transformations, common notes, and voice-leading paths connect neighboring chords. Edit and play a four-step progression, then inspect it in any workspace. Manual playing or Stop cancels it.
+- **Scope** preserves the high-resolution waveform, two-note XY, and three-note XYZ views, including their independent cameras, complete paths, glowing sweep, deep zoom, and miniature signal traces.
+
+The active keyboard and sound controls stay available in every workspace. Switching views preserves notes, tuning, camera state, and visual pause. Touch layouts stack inspectors without removing tools; reduced-motion preferences start the visual clock paused.
 
 ## Run
 
@@ -13,7 +24,7 @@ pnpm build
 pnpm exec playwright test
 ```
 
-The page starts with a labelled, silent sine-wave preview. Playing a key or chord starts audio through a user gesture. Sampled instruments download their recordings on first use; the local synth plays while loading and remains available if a download fails.
+The page starts with a labelled, silent modeled harmonic preview. Scope uses a sine preview. Playing a key or chord starts audio through a user gesture. Sampled instruments download their recordings on first use; the local synth plays while loading and remains available if a download fails.
 
 ## Playing and inspecting
 
@@ -23,11 +34,32 @@ The page starts with a labelled, silent sine-wave preview. Playing a key or chor
 - **Follow sound** starts enabled. The sweep and automatic orbit move only while the actual master output is audible; the highlight and miniature scopes fade with its measured envelope. Natural sample endings and mute stop motion even when notes remain latched. Turn it off for **Free run**, which animates the captured shape in silence. The complete path stays available in both modes.
 - **Sweep speed** controls a glowing highlight traveling over a fixed, complete path, from 2 to 200 seconds per sweep (20 seconds by default). Waveforms stay stationary. **Tail length** changes only the highlight, never the underlying curve.
 - **Freeze** pauses the highlight, miniature scopes, and automatic orbit independently of sound. It stays paused across view, chord, and source changes until Resume is pressed; a newly selected sound is captured in that paused state. The camera can still be moved. **Recapture** explicitly replaces an instrument's held waveform with a new complete audio window.
-- Scroll or pinch to zoom up to **128×** in every view; zoom follows the pointer. **Fit** (or double-clicking the canvas) centers the actual curve while preserving the viewing direction. **Reset rotation** restores the 3D starting direction while preserving magnification. Drag to orbit in 3D, Shift-drag/right-drag to pan. Drag pans in 2D and waveform views. Each view retains its own camera, and changing notes never resets zoom. Automatic orbit starts off.
+- In **Scope**, scroll or pinch to zoom up to **128×**; zoom follows the pointer. **Fit** (or double-clicking the canvas) centers the actual curve while preserving the viewing direction. **Reset rotation** restores the 3D starting direction while preserving magnification. Drag to orbit in 3D, Shift-drag/right-drag to pan. Drag pans in 2D and waveform views. Each view retains its own camera, and changing notes never resets zoom. Automatic orbit starts off.
 - **Waveform / 2D / 3D** selects a time plot, a two-note XY plot, or a three-note XYZ plot. This choice always persists through chord, interval, and keyboard input. Insufficient notes produce a prompt instead of silently changing views. Larger keyboard combinations can sound; the parametric plot explicitly identifies its first two or three plotted voices.
 - The circle of fifths, scale selector, chord pads, interval presets, piano, and connected MIDI inputs all feed the same note state.
 
 Computer keys follow MIDI Lab: `A W S E D F T G Y H U J K O L P ; '` play chromatically; `Z` / `X` shift the octave. Musical shortcuts are suppressed while typing, navigating the circle, or using dialogs and focused controls. `Cmd/Ctrl + .` stops sound. Circle navigation keeps its curved keyboard focus indicator; mouse input does not show a rectangular focus box.
+
+## Tuning and spectral analysis
+
+Fine tuning spans ±50 cents per selected MIDI pitch. Synth oscillators and sampled buffer sources glide through native audio parameters without restarting their envelopes. A tuning edit versions all chord members on one capture clock, preventing stale axes. A new chord resets its offsets; Replay selection retains them and rearticulates finite recordings.
+
+A worker applies a 16,384-sample Hann-windowed FFT to each isolated voice, then interpolates local peaks and retains up to sixteen significant partials. These are measured peaks, including inharmonic components, rather than a reconstruction of the instrument as ideal harmonics. The harmonic number shown beside a peak is approximate. The finite analysis window limits frequency resolution and excludes much of the initial attack. Captures remain inspectable after decay; Recapture explicitly takes another window. Tuning temporarily projects the last measured frequencies until a fresh settled capture arrives, and the interface labels that projection.
+
+The overtone pair animation represents the measured frequency difference multiplied by the visual speed. Follow sound gates it with the audible output. The tuning surface uses the [Sethares critical-band roughness kernel](https://sethares.engr.wisc.edu/comprog.html), minimum-amplitude weighting, and cross-note partial pairs. A worker samples a 65×65 grid over ±50 cents for notes two and three, holding every other selected note fixed. Height is normalized within that surface, so comparing heights across different instruments is not an absolute loudness or consonance comparison. Pure tones need not have the familiar valleys of harmonic instruments. The model excludes rhythm, musical context, expectation, and cultural preference.
+
+## Deployment
+
+Every push to `main` runs type checking, lint, mathematical/audio tests, and Playwright production-browser regressions in [GitHub Actions](https://github.com/NeoVand/chord/actions). Passing builds deploy the static site to GitHub Pages. Pull requests run the same checks without deploying.
+
+The Pages build sets `BASE_PATH=/chord`; SvelteKit resolves JavaScript, workers, fonts, and the audio worklet under that repository path. To verify locally:
+
+```sh
+BASE_PATH=/chord pnpm build
+BASE_PATH=/chord pnpm preview
+```
+
+Open `/chord/` on the preview server. Development uses `/` as usual. The checked-in pnpm version and lockfile keep installs reproducible.
 
 ## Signal path
 
@@ -45,8 +77,8 @@ Three.js uses WebGPU and falls back to WebGL2 where WebGPU is unavailable. The a
 
 MIDI Lab supplied the keyboard interaction and geometry, voice selector, circle-of-fifths geometry and musical data, audioMotion configuration, GM program map, sample-loading strategy, and subtractive synth presets/voice design. Components are adapted to Chord's shared state instead of importing MIDI Lab's course or transport system.
 
-Audio lives in `src/lib/audio/`, musical data in `src/lib/music/`, and captured-signal rendering in `src/lib/visualization/`. `src/lib/types.ts` defines their boundary. The OP-XY replica's per-voice SourceGraph engines are a future adapter at the audio voice output boundary; its engines, LFO controls, and effects panel are not included in this first version.
+Audio lives in `src/lib/audio/`, musical data in `src/lib/music/`, spectral/tuning/lattice models in `src/lib/harmony/`, and captured-signal rendering in `src/lib/visualization/`. `src/lib/types.ts` and `src/lib/harmony/types.ts` define their boundaries. The OP-XY replica's per-voice SourceGraph engines are a future adapter at the audio voice output boundary; its engines, LFO controls, and effects panel are not included in this version.
 
-The selected UI concept and other generated directions are saved in `design/concepts/`.
+The original UI concept is saved in `design/concepts/`; the three approved future directions are in `design/futures-2026-10-30/`.
 
-The interface uses a true-black canvas and neutral grayscale surfaces. Cyan, coral, and violet connect the animated curve highlight, individual waveforms, note labels, and selected piano keys; cyan identifies the selected chord. The complete parametric path stays neutral so its colored moving highlight stands out. Consistent Lucide icons through `@lucide/svelte` include the Audio Waveform brand mark and favicon.
+The interface uses a true-black canvas and neutral grayscale surfaces. Cyan, coral, and violet connect the animated curve highlight, individual waveforms, note labels, and selected piano keys; cyan identifies the selected chord. The complete parametric path stays neutral so its colored moving highlight stands out. Lucide icons through `@lucide/svelte` include the Audio Waveform brand mark and favicon; the source link uses GitHub's Octicons mark.
