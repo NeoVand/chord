@@ -3,11 +3,10 @@ import { Fn, attribute, color, mix, positionGeometry, smoothstep, uniform, uv, v
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
-import type { PlotState, PlotView, ScopeController, ScopeOptions, SignalChunk } from '../types';
+import type { PlotState, PlotView, ScopeController, ScopeOptions } from '../types';
 import { NOTE_COLORS } from '../music/theory';
-import { StableCapture, type SignalSnapshot } from './capture';
-import { SoundActivity } from './activity';
-import { advanceSweep } from './signals';
+import type { SignalSnapshot } from './capture';
+import { resolveAxisIds } from '../inspection/axes';
 import { CURVE_POINTS, WAVE_POINTS, pathDistances, simplifyPath, sourceProgress } from './path';
 
 interface Path {
@@ -27,7 +26,6 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 	catch (error) { renderer.dispose(); options.onStatus?.('unavailable'); throw error; }
 	const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
 	options.onStatus?.(backend.isWebGPUBackend ? 'webgpu' : 'webgl');
-	const capture = new StableCapture();
 	const scene = new THREE.Scene();
 	const home = new THREE.Vector3(3.2, 1.95, 3.9);
 	// Orthographic inspection keeps zoom from flying through/clipping the shape.
@@ -79,7 +77,6 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 	const tail = uniform(.12);
 	const waveformColor = uniform(0);
 	const activity = uniform(0);
-	const follower = new SoundActivity();
 	const endpoint = positionGeometry.y.lessThan(.5);
 	const progress = varying(endpoint.select(attribute('instanceProgress', 'vec2').x, attribute('instanceProgress', 'vec2').y));
 	const pigment = varying(endpoint.select(attribute('instanceColorStart', 'vec3'), attribute('instanceColorEnd', 'vec3')));
@@ -111,14 +108,12 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 	const materials = [makeMaterial('base'), makeMaterial('halo'), makeMaterial('snake')];
 	const palette = NOTE_COLORS.map((value) => new THREE.Color(value));
 	// Route cyan through violet before coral to avoid a washed-out complementary midpoint.
-	const curvePalette = [palette[0], palette[2], palette[1]];
+	let curvePalette = [palette[0], palette[2], palette[1]];
 	const colorValue = new THREE.Color();
 	let paths: Path[] = [];
-	let displaySamples: { id: string; samples: Float32Array; cycles: number }[] = [];
 	let disposed = false, frame = 0;
-	let lastTime = performance.now(), sweep = .2;
 	let traceProgress = .2;
-	let pathSignature = '', lastView: PlotView | '' = '', lastCapture = '';
+	let pathSignature = '', lastView: PlotView | '' = '';
 	let geometryRevision = 0, lastLod = -1, lastZoom = -1;
 	let width = 1, height = 1;
 	let needsResizeFit = false;
@@ -129,17 +124,20 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 			for (const line of path.lines) scene.remove(line);
 			path.geometry?.dispose();
 		}
-		paths = []; displaySamples = []; lastLod = -1;
+		paths = []; lastLod = -1;
 	}
 
 	function buildPaths(snapshot: SignalSnapshot, state: PlotState) {
 		clearPaths();
 		const waveform = state.view === 'waveform';
-		const notes = snapshot.notes.slice(0, 8);
+		const axes = resolveAxisIds(snapshot.notes, state.axisIds);
+		const ids = waveform ? snapshot.notes.map((note) => note.id) : axes.slice(0, state.view === '2d' ? 2 : 3);
+		const indices = ids.map((id) => snapshot.notes.findIndex((note) => note.id === id));
+		const notes = indices.map((index) => snapshot.notes[index]);
 		const count = waveform ? WAVE_POINTS : CURVE_POINTS;
-		const duration = waveform ? Math.min(snapshot.duration, 4 / Math.min(...notes.map((n) => n.frequency))) : snapshot.duration;
-		const samples = notes.map((note, lane) => ({ id: note.id, cycles: duration * note.frequency, samples: Float32Array.from({ length: count }, (_, i) => snapshot.sample(lane, duration * i / (count - 1))) }));
-		displaySamples = samples;
+		const duration = waveform ? Math.min(snapshot.duration, 4 / Math.min(...snapshot.notes.map((n) => n.frequency))) : snapshot.duration;
+		const samples = indices.map((index) => Float32Array.from({ length: count }, (_, i) => snapshot.sample(index, duration * i / (count - 1))));
+		curvePalette = [indices[0] ?? 0, indices[2] ?? indices[1] ?? 0, indices[1] ?? 0].map((index) => palette[index % palette.length]);
 		// One normalization committed with the complete capture. No gain animation.
 		const gain = snapshot.preview ? 1 : Math.min(30, 1 / Math.max(.025, snapshot.peak));
 		const lanes = waveform ? notes.length : notes.length >= (state.view === '2d' ? 2 : 3) ? 1 : 0;
@@ -149,11 +147,11 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 				if (waveform) {
 					positions[i * 3] = (i / (count - 1) * 2 - 1) * 1.65;
 					const spacing = 2.2 / notes.length;
-					positions[i * 3 + 1] = samples[lane].samples[i] * gain * Math.min(.75, spacing * .4) + ((notes.length - 1) / 2 - lane) * spacing;
+					positions[i * 3 + 1] = samples[lane][i] * gain * Math.min(.75, spacing * .4) + ((notes.length - 1) / 2 - lane) * spacing;
 				} else {
-					positions[i * 3] = samples[0].samples[i] * gain;
-					positions[i * 3 + 1] = samples[1].samples[i] * gain;
-					positions[i * 3 + 2] = state.view === '3d' ? samples[2].samples[i] * gain : 0;
+					positions[i * 3] = samples[0][i] * gain;
+					positions[i * 3 + 1] = samples[1][i] * gain;
+					positions[i * 3 + 2] = state.view === '3d' ? samples[2][i] * gain : 0;
 				}
 			}
 			paths.push({ positions, progress: waveform ? Float32Array.from({ length: count }, (_, i) => i / (count - 1)) : pathDistances(positions), lane, geometry: null, lines: [] });
@@ -162,7 +160,8 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 		canvas.dataset.sourcePoints = String(count);
 		canvas.dataset.signalPeak = snapshot.peak.toFixed(5);
 		canvas.dataset.captureRevision = String(snapshot.revision);
-		canvas.dataset.axisPeaks = samples.slice(0, 3).map(({ samples }) => samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0).toFixed(5)).join(',');
+		canvas.dataset.axisPeaks = samples.slice(0, 3).map((samples) => samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0).toFixed(5)).join(',');
+		canvas.dataset.axisIds = ids.join(',');
 	}
 
 	function fitView(view = options.getState().view) {
@@ -248,18 +247,15 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 	}
 	const observer = new ResizeObserver(resize); observer.observe(canvas); resize();
 
-	function animate(now: number) {
+	function animate() {
 		if (disposed) return;
 		frame = requestAnimationFrame(animate);
-		const dt = Math.min((now - lastTime) / 1000, .1); lastTime = now;
-		const state = options.getState();
-		const snapshot = capture.update(state);
-		if (capture.status !== lastCapture) { lastCapture = capture.status; options.onCapture?.(capture.status); }
 		if (document.hidden || options.isVisible?.() === false) return;
-		follower.update(options.getOutputLevel?.() ?? 0, dt);
-		if (!state.frozen) activity.value = state.followSound ? follower.level : 1;
-		const moving = !state.frozen && (!state.followSound || follower.audible);
-		const signature = snapshot ? `${snapshot.revision}/${state.view}` : '';
+		const state = options.getState();
+		const { signal: snapshot, captureStatus, transport } = options.getInspection();
+		activity.value = transport.level;
+		const axes = resolveAxisIds(snapshot?.notes ?? state.notes, state.axisIds);
+		const signature = snapshot ? `${snapshot.revision}/${state.view}/${state.view === 'waveform' ? '' : axes.join('/')}` : '';
 		if (signature !== pathSignature) {
 			pathSignature = signature;
 			if (snapshot) buildPaths(snapshot, state); else clearPaths();
@@ -272,32 +268,27 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 		needsResizeFit = false;
 		grid.visible = state.view === '3d'; flatGrid.visible = state.view !== '3d';
 		waveformColor.value = state.view === 'waveform' ? 1 : 0;
-		controls['3d'].autoRotate = state.autoRotate && moving && state.view === '3d';
-		controls[state.view].update(dt);
+		controls['3d'].autoRotate = state.autoRotate && transport.moving && state.view === '3d';
+		controls[state.view].update(transport.delta);
 		const zoom = magnification(state.view);
 		const lod = Math.max(0, Math.ceil(Math.log2(Math.max(1, cameras[state.view].zoom))));
 		if (lod !== lastLod) tessellate(state.view, lod);
 		if (Math.abs(zoom - lastZoom) > .005) { lastZoom = zoom; options.onZoom?.(zoom); }
-		if (snapshot) sweep = advanceSweep(sweep, dt, state.speed, !moving);
-		head.value = sweep % 1; tail.value = Math.max(.02, Math.min(.35, state.trail));
+		head.value = transport.progress; tail.value = Math.max(.02, Math.min(.35, state.trail));
 		traceProgress = paths[0] ? sourceProgress(paths[0].progress, head.value) : head.value;
-		canvas.dataset.sampleSource = capture.status === 'idle' ? 'idle' : snapshot ? snapshot.preview ? 'preview' : 'captured' : 'waiting';
-		canvas.dataset.visualFrame = sweep.toFixed(6);
+		canvas.dataset.sampleSource = captureStatus === 'idle' ? 'idle' : captureStatus === 'capturing' ? 'waiting' : snapshot ? snapshot.preview ? 'preview' : 'captured' : 'waiting';
+		canvas.dataset.captureRevision = String(snapshot?.revision ?? 0);
+		canvas.dataset.visualFrame = transport.time.toFixed(6);
 		canvas.dataset.zoom = zoom.toFixed(3);
 		canvas.dataset.traceProgress = traceProgress.toFixed(6);
 		canvas.dataset.signalActivity = activity.value.toFixed(5);
-		canvas.dataset.motionState = state.frozen ? 'frozen' : state.followSound ? follower.audible ? 'following' : 'silent' : 'free';
+		canvas.dataset.motionState = transport.motion;
 		renderer.render(scene, cameras[state.view]);
 	}
 	frame = requestAnimationFrame(animate);
 	return {
-		push(chunk: SignalChunk) { if (!disposed) capture.history.push(chunk); },
-		clearSignals() { capture.clear(); pathSignature = ''; clearPaths(); },
-		getDisplaySamples() { return displaySamples; },
 		getTraceProgress() { return traceProgress; },
-		getSignalActivity() { return activity.value; },
 		fitView,
-		recapture() { capture.recapture(); },
 		zoom(factor) {
 			if (!Number.isFinite(factor) || factor <= 0) return;
 			const view = options.getState().view;
@@ -317,7 +308,7 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 			disposed = true; cancelAnimationFrame(frame); observer.disconnect();
 			canvas.removeEventListener('dblclick', handleDoubleClick);
 			for (const control of Object.values(controls)) control.dispose();
-			capture.history.clear(); clearPaths();
+			clearPaths();
 			for (const material of materials) material.dispose();
 			for (const object of [grid, flatGrid]) {
 				object.geometry.dispose();

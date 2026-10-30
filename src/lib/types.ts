@@ -1,4 +1,5 @@
 /** Shared contracts: sound, captured signals, and their independent visual clock. */
+import type { InspectionFrame } from './inspection/session';
 export type SoundSource = 'sampled' | 'synth' | 'pure';
 export type SignalMode = 'instrument' | 'pure';
 export type PlotView = 'waveform' | '2d' | '3d';
@@ -32,6 +33,8 @@ export interface PlotState {
 	/** Gate motion and modulate glow from the actual audible output. */
 	followSound: boolean;
 	notes: PlotNote[];
+	/** Explicit note identities for X, Y and Z; waveform mode displays every note. */
+	axisIds?: readonly string[];
 	/** Highlight sweeps per second. This never changes the captured path. */
 	speed: number;
 	frozen: boolean;
@@ -43,30 +46,20 @@ export interface PlotState {
 }
 
 export interface ScopeController {
-	push(chunk: SignalChunk): void;
-	/** Ignore queued blocks from the preceding instrument until a new capture version arrives. */
-	clearSignals(): void;
-	/** Borrowed arrays from the same visual clock as the main plot. Do not mutate. */
-	getDisplaySamples(): readonly { id: string; samples: Float32Array; cycles: number }[];
 	/** Source-time position of the main highlight, shared by the miniature scopes. */
 	getTraceProgress(): number;
-	/** Smoothed audible activity for visual envelopes; 1 in Free run mode. */
-	getSignalActivity(): number;
 	zoom(factor: number): void;
 	/** Frame the current curve without changing the viewing direction. */
 	fitView(): void;
-	/** Take a new complete, coherent window of the currently sounding voices. */
-	recapture(): void;
 	resetView(): void;
 	dispose(): void;
 }
 
 export interface ScopeOptions {
 	getState(): PlotState;
-	/** Keep capture alive while avoiding GPU work in another workspace. */
+	getInspection(): InspectionFrame;
+	/** Avoid GPU work in another workspace. Acquisition belongs to the session. */
 	isVisible?(): boolean;
-	getOutputLevel?(): number;
 	onStatus?(status: 'webgpu' | 'webgl' | 'unavailable'): void;
 	onZoom?(magnification: number): void;
-	onCapture?(state: 'capturing' | 'ready' | 'preview' | 'idle'): void;
 }

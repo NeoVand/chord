@@ -21,7 +21,7 @@
 				analyzer.registerGradient('chord', { bgColor:'transparent', colorStops:[{pos:0,color:'#d2d2d2'},{pos:.55,color:'#747474'},{pos:1,color:'#3b3b3b'}] });
 				analyzer.gradient = 'chord';
 			}
-			frame = requestAnimationFrame(tick);
+			if (!analyzer) frame = requestAnimationFrame(tick);
 		};
 		frame = requestAnimationFrame(tick);
 		return () => { cancelAnimationFrame(frame); analyzer?.destroy(); };

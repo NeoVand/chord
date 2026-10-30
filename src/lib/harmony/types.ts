@@ -1,4 +1,5 @@
 import type { PlotNote } from '../types';
+import type { InspectionFrame } from '../inspection/session';
 
 export type Workspace = 'overtones' | 'tuning' | 'chords' | 'scope';
 export interface Partial {
@@ -16,6 +17,8 @@ export interface VoiceSpectrum {
 }
 export interface HarmonicSnapshot {
 	revision: number;
+	/** Identity of the exact shared PCM window behind these measured partials. */
+	captureRevision: number | null;
 	source: 'preview' | 'captured' | 'waiting';
 	/** Frequencies projected from a previous measured spectrum during retuning. */
 	projected: boolean;
@@ -41,7 +44,7 @@ export interface HarmonySceneState {
 }
 export interface HarmonySceneOptions {
 	getState(): HarmonySceneState;
-	getOutputLevel(): number;
+	getInspection(): InspectionFrame;
 	onPickPair?(id: string): void;
 	/** Atomic cents offsets keyed by voice identity. */
 	onTune?(updates: { id: string; cents: number }[]): void;

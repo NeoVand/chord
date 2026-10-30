@@ -1,5 +1,5 @@
-import type { PlotNote, SignalChunk, SignalMode } from '../types';
-import { SignalHistory } from '../visualization/signals';
+import type { PlotNote, SignalMode } from '../types';
+import type { SignalSnapshot } from '../visualization/capture';
 import { FFT_SIZE } from './spectrum';
 import type { HarmonicSnapshot, VoiceSpectrum } from './types';
 
@@ -9,71 +9,68 @@ export function previewSpectrum(notes: readonly PlotNote[], mode: SignalMode): V
 	})) }));
 }
 
-/** One immutable settled spectrum per capture generation. All FFT work stays
- * off the interaction thread. Retuning projects the last measurement while a
- * fresh, fully settled window is acquired, and is explicitly labelled as such.
- */
+/** Analyse the session's immutable capture. No second audio history or window. */
 export class SpectrumCapture {
-	private history = new SignalHistory(.7);
 	private worker = new Worker(new URL('./spectrum.worker.ts', import.meta.url), { type: 'module' });
 	private epoch = 0;
 	private revision = 0;
 	private pending = '';
-	private measuredKey = '';
-	private measurementKey = '';
+	private pendingRevision = 0;
+	private pendingMode: SignalMode = 'instrument';
+	private requestedRevision = -1;
+	private measuredRevision = -1;
+	private measuredMode: SignalMode = 'instrument';
+	private selection = '';
 	private lastKey = '';
 	private measurement: VoiceSpectrum[] = [];
-	private snapshot: HarmonicSnapshot = { revision: 0, source: 'preview', projected: false, voices: [] };
+	private snapshot: HarmonicSnapshot = { revision: 0, captureRevision: null, source: 'preview', projected: false, voices: [] };
 	constructor() {
 		this.worker.onmessage = ({ data }: MessageEvent<{ key: string; voices: VoiceSpectrum[] }>) => {
 			if (data.key !== this.pending) return;
 			this.pending = '';
-			this.measuredKey = data.key;
-			// Keep the last meaningful capture after a finite sample has decayed.
-			if (data.voices.every((voice) => voice.partials.length)) { this.measurement = data.voices; this.measurementKey = data.key; }
+			if (data.voices.length && data.voices.every((voice) => voice.partials.length)) {
+				this.measurement = data.voices;
+				this.measuredRevision = this.pendingRevision;
+				this.measuredMode = this.pendingMode;
+			}
 			this.lastKey = '';
 		};
 	}
-	push(chunk: SignalChunk): void { this.history.push(chunk); }
-	read(notes: readonly PlotNote[], mode: SignalMode, active: boolean): HarmonicSnapshot {
-		// The UI owns reactive proxies. Workers and retained snapshots own plain data.
-		notes = notes.map((note) => ({ id: note.id, midi: note.midi, frequency: note.frequency, label: note.label }));
-		const ids = notes.map((note) => note.id);
-		const generation = this.history.generation(ids);
-		const signature = `${this.epoch}/${mode}/${notes.map((note) => `${note.id}:${note.frequency}`).join(',')}`;
-		const jobKey = `${signature}/${generation}`;
-		const range = this.history.range(ids);
-		if (active && range && generation && this.pending !== jobKey && this.measuredKey !== jobKey) {
-			const start = range.start + Math.round(.045 * this.history.sampleRate);
-			if (range.end >= start + FFT_SIZE) {
-				const channels = ids.map((id) => {
-					const sample = this.history.sampler(id);
-					return Float32Array.from({ length: FFT_SIZE }, (_, i) => sample(start + i));
-				});
-				this.pending = jobKey;
-				this.worker.postMessage({ key: jobKey, notes: [...notes], channels, sampleRate: this.history.sampleRate }, channels.map((channel) => channel.buffer));
-			}
+	read(notes: readonly PlotNote[], mode: SignalMode, active: boolean, signal: SignalSnapshot | null, capturing = false): HarmonicSnapshot {
+		// Plain values cross the worker boundary; Svelte proxies never do.
+		notes = notes.map(({ id, midi, frequency, label }) => ({ id, midi, frequency, label }));
+		const selection = `${mode}/${notes.map((note) => `${note.id}:${note.frequency}`).join(',')}`;
+		if (selection !== this.selection) { this.selection = selection; this.pending = ''; }
+		const aligned = signal && signal.mode === mode && signal.notes.length === notes.length
+			&& signal.notes.every((note, index) => note.id === notes[index].id && note.frequency === notes[index].frequency);
+		if (active && aligned && !signal.preview && signal.revision !== this.requestedRevision && signal.channels.every((channel) => channel.length >= FFT_SIZE)) {
+			this.requestedRevision = signal.revision;
+			this.pendingRevision = signal.revision; this.pendingMode = mode;
+			const channels = signal.channels.map((channel) => channel.slice(0, FFT_SIZE));
+			this.pending = `${this.epoch}/${signal.revision}/${selection}`;
+			this.worker.postMessage({ key: this.pending, notes, channels, sampleRate: signal.sampleRate }, channels.map((channel) => channel.buffer));
 		}
-		const key = `${jobKey}/${this.measuredKey}/${active}`;
+		const key = `${selection}/${signal?.revision}/${this.measuredRevision}/${this.pending}/${active}/${capturing}`;
 		if (key === this.lastKey) return this.snapshot;
 		this.lastKey = key;
-		const matched = notes.length > 0 && notes.every((note) => this.measurement.some((voice) => voice.id === note.id));
+		const matched = active && this.measuredMode === mode && notes.length > 0 && notes.every((note) => this.measurement.some((voice) => voice.id === note.id));
 		const voices = matched ? notes.map((note) => {
 			const voice = this.measurement.find((candidate) => candidate.id === note.id)!;
 			const ratio = note.frequency / voice.note.frequency;
 			return { id: note.id, note, partials: voice.partials.map((partial) => ({ ...partial, frequency: partial.frequency * ratio })) };
 		}) : previewSpectrum(notes, mode);
-		const awaitingGeneration = active && generation !== null && this.measurementKey !== jobKey;
-		this.snapshot = { revision: ++this.revision, source: matched ? awaitingGeneration ? 'waiting' : 'captured' : active ? 'waiting' : 'preview',
-			projected: matched && notes.some((note) => this.measurement.find((voice) => voice.id === note.id)!.note.frequency !== note.frequency), voices };
+		const current = matched && aligned && this.measuredRevision === signal.revision && !capturing;
+		this.snapshot = {
+			revision: ++this.revision, captureRevision: matched ? this.measuredRevision : null,
+			source: current ? 'captured' : active ? 'waiting' : 'preview',
+			projected: matched && notes.some((note) => this.measurement.find((voice) => voice.id === note.id)!.note.frequency !== note.frequency), voices
+		};
 		return this.snapshot;
 	}
-	clear(): void {
-		this.epoch++; this.history.invalidate(); this.measurement = []; this.pending = ''; this.measuredKey = ''; this.measurementKey = ''; this.lastKey = '';
-	}
-	/** Keep the visible measurement until a new complete window can replace it. */
-	recapture(): void { this.epoch++; this.history.clear(); this.pending = ''; this.measuredKey = ''; this.lastKey = ''; }
-	/** Reject queued pre-glide PCM but preserve the last spectrum for projection. */
-	retune(): void { this.epoch++; this.history.invalidate(); this.pending = ''; this.measuredKey = ''; this.lastKey = ''; }
-	dispose(): void { this.worker.terminate(); this.history.clear(); }
+	clear(): void { this.retune(); this.measurement = []; this.measuredRevision = -1; }
+	/** Cancel obsolete work, retaining measured partials for an explicit projection. */
+	retune(): void { this.epoch++; this.pending = ''; this.lastKey = ''; }
+	// The current window is still valid while its replacement is acquired.
+	recapture(): void { this.lastKey = ''; }
+	dispose(): void { this.worker.terminate(); }
 }

@@ -10,7 +10,7 @@
 		void import('#lib/visualization/harmony-scene.ts').then(async ({createHarmonyScene})=>{
 			if(disposed||!canvas)return;
 			const instance=await createHarmonyScene(canvas,{
-				getState:()=>options.getState(),getOutputLevel:()=>options.getOutputLevel(),
+				getState:()=>options.getState(),getInspection:()=>options.getInspection(),
 				onPickPair:(id)=>options.onPickPair?.(id),onTune:(updates)=>options.onTune?.(updates),
 				onBusy:(busy)=>options.onBusy?.(busy),onStatus:(status)=>options.onStatus?.(status)
 			});

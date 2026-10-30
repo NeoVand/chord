@@ -1,40 +1,52 @@
-import type { PlotNote, PlotState } from '../types';
+import type { PlotNote, SignalMode } from '../types';
 import { SignalHistory } from './signals';
 
+export interface CaptureState { notes: readonly PlotNote[]; mode: SignalMode; active: boolean }
+export type CaptureStatus = 'capturing' | 'ready' | 'preview' | 'idle';
 export interface SignalSnapshot {
 	revision: number;
 	notes: PlotNote[];
+	mode: SignalMode;
 	duration: number;
 	peak: number;
 	preview: boolean;
+	sampleRate: number;
+	startFrame: number;
+	/** Owned, immutable aligned PCM. Workers receive copies, never these buffers. */
+	channels: readonly Float32Array[];
 	/** Seconds relative to this immutable capture's start. */
 	sample(lane: number, seconds: number): number;
 }
 
 /** A complete finite trajectory, not an assertion that equal-tempered pitches close. */
-export function captureDuration(notes: PlotNote[]): number {
+export function captureDuration(notes: readonly PlotNote[]): number {
 	return Math.min(.75, Math.max(.02, 24 / Math.max(25, Math.min(...notes.map((note) => note.frequency)))));
 }
 
 /** Publish only complete, aligned windows. Streaming blocks never mutate a published snapshot. */
 export class StableCapture {
-	readonly history = new SignalHistory();
-	status: 'capturing' | 'ready' | 'preview' | 'idle' = 'idle';
+	status: CaptureStatus = 'idle';
 	private signature = '';
 	private generation: string | null = null;
 	private start: number | null = null;
 	private revision = 0;
 	private pending = true;
 	private snapshot: SignalSnapshot | null = null;
+	private retainPending = false;
+	constructor(readonly history = new SignalHistory(), private minimumFrames = 0) {}
 
-	update(state: PlotState): SignalSnapshot | null {
-		const notes = state.notes.slice(0, 8);
+	update<T extends CaptureState>(state: T): SignalSnapshot | null {
+		const notes = state.notes.slice(0, 8).map(({ id, midi, frequency, label }) => ({ id, midi, frequency, label }));
 		const signature = `${state.active}/${state.mode}/${notes.map((n) => `${n.id}:${n.frequency}`).join(',')}`;
 		if (signature !== this.signature) {
 			this.signature = signature;
 			this.generation = null;
 			this.start = null;
-			this.snapshot = null;
+			const previous = this.snapshot;
+			const compatible = this.retainPending && state.active && previous && !previous.preview && previous.mode === state.mode
+				&& notes.length === previous.notes.length && notes.every((note, index) => note.id === previous.notes[index].id);
+			if (!compatible) this.snapshot = null;
+			this.retainPending = false;
 			this.pending = true;
 		}
 		if (!notes.length) { this.status = 'idle'; return null; }
@@ -42,17 +54,20 @@ export class StableCapture {
 		if (!state.active) {
 			this.status = 'preview';
 			this.snapshot ??= {
-				revision: ++this.revision, notes, duration, peak: 1, preview: true,
+				revision: ++this.revision, notes, mode: state.mode, duration, peak: 1, preview: true,
+				sampleRate: this.history.sampleRate, startFrame: 0, channels: [],
 				sample: (lane, seconds) => Math.sin(2 * Math.PI * notes[lane].frequency * seconds)
 			};
 			return this.snapshot;
 		}
 		const ids = notes.map((n) => n.id);
+		const matches = this.snapshot && this.snapshot.mode === state.mode && this.snapshot.notes.length === notes.length
+			&& notes.every((note, index) => this.snapshot!.notes[index].id === note.id && this.snapshot!.notes[index].frequency === note.frequency);
 		const generation = this.history.generation(ids);
 		const range = this.history.range(ids);
 		if (!range || !generation) {
 			// A frozen selection can outlive its released voices and input history.
-			this.status = this.snapshot && !this.pending ? 'ready' : 'capturing';
+			this.status = matches && !this.pending ? 'ready' : 'capturing';
 			return this.snapshot;
 		}
 		if (generation !== this.generation) {
@@ -61,10 +76,11 @@ export class StableCapture {
 			this.start = range.start + Math.round(.045 * this.history.sampleRate);
 			this.pending = true;
 		}
-		if (!this.pending) { this.status = 'ready'; return this.snapshot; }
+		if (!this.pending) { this.status = matches ? 'ready' : 'capturing'; return this.snapshot; }
 		this.status = 'capturing';
 		const sampleRate = this.history.sampleRate;
-		const count = Math.ceil(duration * sampleRate) + 1;
+		// The same settled window supplies both geometry and spectral analysis.
+		const count = Math.max(this.minimumFrames, Math.ceil(duration * sampleRate) + 1);
 		this.start = Math.max(range.start, this.start ?? range.start);
 		if (range.end < this.start + count - 1) return this.snapshot;
 		const start = this.start;
@@ -81,11 +97,12 @@ export class StableCapture {
 			// Explicit recapture after a piano decay should not replace a useful
 			// shape with an empty point. A new audible generation can replace it.
 			this.pending = false;
-			this.status = 'ready';
+			this.status = matches ? 'ready' : 'capturing';
 			return this.snapshot;
 		}
 		this.snapshot = {
-			revision: ++this.revision, notes, duration, peak, preview: false,
+			revision: ++this.revision, notes, mode: state.mode, duration, peak, preview: false,
+			sampleRate, startFrame: start, channels,
 			sample(lane, seconds) {
 				const data = channels[lane];
 				const frame = Math.min(data.length - 1, Math.max(0, seconds * sampleRate));
@@ -103,8 +120,10 @@ export class StableCapture {
 		this.start = this.history.latestFrame;
 	}
 
-	clear(): void {
-		this.history.invalidate(); this.signature = ''; this.snapshot = null;
+	clear(retainSnapshot = false): void {
+		this.history.invalidate(); this.signature = '';
+		if (!retainSnapshot) this.snapshot = null;
+		this.retainPending = retainSnapshot;
 		this.generation = null; this.start = null; this.pending = true;
 	}
 }

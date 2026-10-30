@@ -6,7 +6,6 @@ import { partialPairs } from '../harmony/pairs';
 import { centsOffset } from '../harmony/tuning';
 import type { RoughnessSurface } from '../harmony/roughness';
 import type { HarmonySceneController, HarmonySceneOptions, HarmonySceneState, PartialPair, VoiceSpectrum } from '../harmony/types';
-import { SoundActivity } from './activity';
 
 const TAU = Math.PI * 2;
 const palette = NOTE_COLORS.map((value) => new THREE.Color(value));
@@ -114,7 +113,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 	label('NOTE 2', new THREE.Vector3(0, -.7, 3.15), scenes.tuning, NOTE_COLORS[1], .28);
 	label('NOTE 3', new THREE.Vector3(3.15, -.7, 0), scenes.tuning, NOTE_COLORS[2], .28);
 
-	let disposed = false, frame = 0, lastTime = performance.now(), clock = 0, lastKey = '', lastPair = '', view = '';
+	let disposed = false, frame = 0, lastKey = '', lastPair = '', view = '';
 	let width = 1, height = 1;
 	let surface: RoughnessSurface | null = null, surfaceKey = '', requestedKey = '', requestTimer: ReturnType<typeof setTimeout> | undefined;
 	let surfaceRevisionSeen = -1;
@@ -256,29 +255,24 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		if (pair) options.onPickPair?.(pair.id);
 	}
 	canvas.addEventListener('pointerdown', down, true); canvas.addEventListener('pointermove', move, true); canvas.addEventListener('pointerup', up, true); canvas.addEventListener('pointercancel', up, true);
-	const activity = new SoundActivity();
-	let displayedEnvelope = 0;
-	function animate(now: number) {
+	function animate() {
 		if (disposed) return;
 		frame = requestAnimationFrame(animate);
-		const dt = Math.min(.1, (now - lastTime) / 1000); lastTime = now;
 		if (document.hidden || !canvas.offsetWidth || !canvas.offsetHeight) return;
-		const state = options.getState();
+		const inspection = options.getInspection();
+		const state = { ...options.getState(), spectrum: inspection.spectrum };
+		const { transport } = inspection;
 		if (view !== state.view) { view = state.view; controls.overtones.enabled = view === 'overtones'; controls.tuning.enabled = view === 'tuning'; }
 		const key = `${state.spectrum.revision}/${state.notes.map((note) => note.frequency).join('/')}`;
 		if (key !== lastKey) { lastKey = key; buildOvertones(state); }
-		activity.update(options.getOutputLevel(), dt);
-		const moving = !state.frozen && (!state.followSound || activity.audible);
-		if (moving) clock += dt * state.speed;
-		if (!state.frozen) displayedEnvelope = state.followSound ? activity.level : 1;
-		const envelope = displayedEnvelope;
+		const envelope = transport.level;
 		for (const material of glowMaterials) material.opacity = .27 + envelope * .3;
 		if (view === 'overtones') {
 			updatePair(state);
-			travelling.visible = travellingHalo.visible = Boolean(pairPath) && (!state.followSound || activity.audible || state.frozen);
+			travelling.visible = travellingHalo.visible = Boolean(pairPath) && (!state.followSound || transport.audible || state.frozen);
 			if (pairPath) {
 				const pair = pairs.find((candidate) => candidate.id === state.selectedPair) ?? pairs[0];
-				const beatPhase = clock * (pair?.beatHz ?? 0);
+				const beatPhase = transport.time * (pair?.beatHz ?? 0);
 				travelling.position.copy(pairPath.getPoint(beatPhase % 1)); travellingHalo.position.copy(travelling.position);
 				pairMaterial.opacity = .35 + .3 * (.5 + .5 * Math.cos(TAU * beatPhase)) * envelope;
 			}
@@ -290,8 +284,9 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 				equalMarker.position.set(0, sampleHeight(0, 0) + .04, 0);
 			}
 		}
-		canvas.dataset.visualFrame = clock.toFixed(6);
-		canvas.dataset.motionState = state.frozen ? 'frozen' : state.followSound ? activity.audible ? 'following' : 'silent' : 'free';
+		canvas.dataset.visualFrame = transport.time.toFixed(6);
+		canvas.dataset.motionState = transport.motion;
+		canvas.dataset.captureRevision = String(state.spectrum.captureRevision ?? 0);
 		canvas.dataset.view = state.view;
 		controls[state.view].update(); renderer.render(scenes[state.view], cameras[state.view]);
 	}

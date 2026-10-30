@@ -129,17 +129,17 @@ test('opens silently, plays real captured tones, freezes and changes visual spee
 	await page.waitForTimeout(250);
 	expect(await visualFrame(page)).toBe(frozen);
 	await page.getByRole('button', { name: /Resume/ }).click();
-	await page.getByRole('slider', { name: 'Sweep speed', exact: true }).fill('0.01');
+	await page.getByRole('slider', { name: 'Motion speed', exact: true }).fill('0.01');
 	const slowStart = await visualFrame(page);
 	await page.waitForTimeout(250);
 	const slowDelta = (await visualFrame(page)) - slowStart;
-	await page.getByRole('slider', { name: 'Sweep speed', exact: true }).fill('0.5');
+	await page.getByRole('slider', { name: 'Motion speed', exact: true }).fill('0.5');
 	const fastStart = await visualFrame(page);
 	await page.waitForTimeout(250);
 	expect((await visualFrame(page)) - fastStart).toBeGreaterThan(slowDelta * 3);
 	await page.getByRole('button', { name: 'Stop all sound', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
-	await expect(page.getByText('Sound stopped · Last capture', { exact: true })).toBeVisible();
+	await expect(page.locator('#workspace-scope .canvas-status')).toHaveText(/Captured signal.*Silent/);
 	expect(errors).toEqual([]);
 });
 
@@ -186,7 +186,7 @@ test('camera zoom persists through new chords and projections, with independent 
 	await page.getByRole('button', { name: 'Waveform', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-source-points', '32768');
 	const waveGeometry = await canvas(page).getAttribute('data-geometry-revision');
-	await page.getByRole('slider', { name: 'Sweep speed', exact: true }).fill('0.005');
+	await page.getByRole('slider', { name: 'Motion speed', exact: true }).fill('0.005');
 	await expect(page.getByText('200s', { exact: false }).first()).toBeVisible();
 	await page.waitForTimeout(300);
 	await expect(canvas(page)).toHaveAttribute('data-geometry-revision', waveGeometry!);
@@ -242,7 +242,7 @@ test('wheel, intervals, instrument search and keyboard share a consistent select
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
 	await page.keyboard.press('Control+.');
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
-	await expect(page.getByText('Sound stopped · Last capture', { exact: true })).toBeVisible();
+	await expect(page.locator('#workspace-scope .canvas-status')).toHaveText(/Captured signal.*Silent/);
 	const wedge = page.getByRole('group', { name: /Circle of fifths/ }).getByRole('button', { name: 'Play G major', exact: true });
 	await wedge.click();
 	await page.keyboard.press('a');
@@ -326,7 +326,7 @@ test('Freeze remains explicit while choosing new chords and comparing signal mod
 	await page.waitForTimeout(150);
 	expect(await visualFrame(page)).toBe(frame);
 	await page.getByRole('button', { name: 'Stop all sound', exact: true }).click();
-	await expect(page.getByText('Sound stopped · Last capture', { exact: true })).toBeVisible();
+	await expect(page.locator('#workspace-scope .canvas-status')).toHaveText(/Captured signal.*Silent/);
 	await page.getByRole('button', { name: 'Pure tones', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'idle');
 	await expect(page.locator('#workspace-scope').getByText('Ready to play', { exact: true })).toBeVisible();
@@ -348,6 +348,8 @@ test('the mobile layout stays within the viewport and can play a chord', async (
 	await page.getByRole('button', { name: 'Stop all sound', exact: true }).click();
 	await page.setViewportSize({ width: 320, height: 780 });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
-	const targets = await page.locator('.camera-controls button').evaluateAll((buttons) => buttons.map((button) => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height })));
+	const cameraButtons = page.getByRole('button', { name: /^(Zoom in|Zoom out|Fit curve)$/ });
+	await expect(cameraButtons).toHaveCount(3);
+	const targets = await cameraButtons.evaluateAll((buttons) => buttons.map((button) => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height })));
 	expect(targets.every((size) => size.width >= 40 && size.height >= 40)).toBe(true);
 });

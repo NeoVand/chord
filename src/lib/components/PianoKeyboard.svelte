@@ -32,6 +32,7 @@
 	let focused = $state(48);
 	const focusNote = $derived(Math.max(base, Math.min(base + 36, focused)));
 	let bed: HTMLDivElement | undefined;
+	let keyboardNavigation=false;
 
 	function captureBed(element: HTMLDivElement) { bed = element; return () => { bed = undefined; }; }
 	function cap(note: number) { return keysEnabled ? TYPE_CAP[note - (base + 12)] ?? '' : ''; }
@@ -77,9 +78,10 @@
 	}
 	function typingBlocked(event: KeyboardEvent) {
 		return event.ctrlKey || event.metaKey || event.altKey || event.isComposing ||
-			(event.target instanceof Element && !!event.target.closest('input, select, textarea, dialog, [contenteditable="true"], [role="dialog"], button:focus-visible, [role="button"]:focus'));
+			(event.target instanceof Element && (!!event.target.closest('input, select, textarea, dialog, [contenteditable="true"], [role="dialog"], [role="button"]:focus') || keyboardNavigation && !!event.target.closest('button:focus-visible')));
 	}
 	function keyDown(event: KeyboardEvent) {
+		if(['Tab','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter',' '].includes(event.key))keyboardNavigation=true;
 		if (!keysEnabled || typingBlocked(event)) return;
 		if (event.code === 'KeyZ' || event.code === 'KeyX') {
 			event.preventDefault(); if (event.repeat) return;
@@ -110,7 +112,7 @@
 	onDestroy(releaseAll);
 </script>
 
-<svelte:window onkeydown={keyDown} onkeyup={keyUp} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onblur={releaseAll} />
+<svelte:window onpointerdown={()=>keyboardNavigation=false} onkeydown={keyDown} onkeyup={keyUp} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onblur={releaseAll} />
 <svelte:document onvisibilitychange={() => { if (document.hidden) releaseAll(); }} />
 
 <div class="keyboard-scroll">
