@@ -160,6 +160,15 @@ test('the complete curve stays fixed through sweeps, tail changes and deep zoom'
 	await expect.poll(async () => Number(await canvas(page).getAttribute('data-zoom'))).toBeGreaterThan(9);
 	expect(Number(await canvas(page).getAttribute('data-render-segments'))).toBeGreaterThan(segments);
 	await expect(canvas(page)).toHaveAttribute('data-geometry-revision', geometry!);
+	await page.getByRole('button', { name: 'Stop all sound', exact: true }).click();
+});
+
+test('camera zoom persists through new chords and projections, with independent waveform inspection', async ({ page }) => {
+	await load(page);
+	await page.getByRole('button', { name: 'Pure tones', exact: true }).click();
+	await page.getByRole('button', { name: /Play this chord/ }).click();
+	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
+	for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
 	const zoom = await canvas(page).getAttribute('data-zoom');
 	const wedge = page.getByRole('button', { name: 'Play G major', exact: true });
 	await wedge.click();
