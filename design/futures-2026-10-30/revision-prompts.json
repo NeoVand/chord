@@ -1,0 +1,15 @@
+{
+  "method": "Built-in image_gen",
+  "corrections": [
+    {
+      "slug": "03-chord-atlas",
+      "source": "/Users/neo/.codex/generated_images/01a18602-1974-7ad2-bb5f-40dfa008d091/exec-be9b3437-e537-49a4-ba60-077c57ecdcf9.png",
+      "prompt": "Use case: precise-object-edit / ui-mockup. This image is the edit target. Keep this polished chord application mockup almost completely unchanged: same exact layout, black surfaces, typography, glowing selected C-E-G triangle, ghost C-E-flat-G triangle, curved movement arrow, right inspector, bottom keyboard and controls, framing and resolution.\nMake one targeted correction: the pitch labels on the MAIN TONNETZ GRID must represent correct fifth/third adjacency. Do NOT change the other UI text or piano.\nIn the MIDDLE row of six visible grid nodes, from left to right, the labels MUST be exactly: \"B♭\", \"F\", \"C\", \"G\", \"D\", \"A\". Thus replace the far-left F with B♭, the next inactive C with F, leave the selected cyan C and selected violet G and inactive D unchanged, and replace the far-right E with A.\nIn the UPPER row of five visible labeled nodes, from left to right, the labels MUST be exactly: \"D\", \"A\", \"E\", \"B\", \"F♯\". Keep the selected coral E in the middle exactly where it is.\nThe LOWER row is already correct: leave \"D♭\", \"A♭\", \"E♭\", \"B♭\", \"F\" unchanged.\nDo not duplicate or add nodes. Do not move any node. No other redesign. Preserve every other visual element."
+    },
+    {
+      "slug": "02-tuning-terrain",
+      "source": "/Users/neo/.codex/generated_images/01a18602-1974-7ad2-bb5f-40dfa008d091/exec-f5defaed-4db3-4555-b4dd-0e7d2d40d4b6.png",
+      "prompt": "Use case: precise-object-edit / ui-mockup. This image is the edit target. Keep this beautiful chord tuning-terrain screenshot, including its exact black/gray style, contour surface geometry, colored valley paths, root selector, right tuning inspector with E3 −13.7 ct and G3 +2.0 ct, comparison strip, sound controls and piano.\nRefine only the plot annotations and its missing inspection controls. Remove the FOUR floating terrain ratio labels \"4:3\", \"5:4\", \"3:2\", \"6:5\" and their white dashed vertical leader stems, since they are misleading at these positions. Do NOT remove the accurate 5:4 and 3:2 ratios in the RIGHT INSPECTOR. Instead add one tiny tasteful label \"Just\" next to the existing cyan draggable dot in the valley, and \"Equal\" next to the existing coral comparison dot.\nIn the empty black area above the terrain, between the root selector and right inspector, add a small quiet horizontal group of three actual controls: \"Freeze\", \"Follow sound\" selected, and \"Slow motion\". Use the existing thin outlined button language, readable small white type, one restrained cyan selected indicator, and do not obstruct the terrain. Do not change the rest of the UI. No new objects, random labels or additional data."
+    }
+  ]
+}

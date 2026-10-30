@@ -1,0 +1,14 @@
+{
+  "status": "Awaiting the user's choice of design direction",
+  "method": "Built-in image_gen, using a screenshot of the running app as reference",
+  "concepts": [
+    { "option": "A", "name": "Harmonic Observatory", "image": "01-harmonic-observatory.png", "purpose": "Explore overtone alignment and beating", "firstInteractionToPrototype": "Select a partial pair and retune its note while watching and hearing the beat rate change" },
+    { "option": "B", "name": "Tuning Terrain", "image": "02-tuning-terrain.png", "purpose": "Explore nearby tunings on an estimated roughness surface", "firstInteractionToPrototype": "Drag two note-tuning coordinates and compare equal temperament with a just triad" },
+    { "option": "C", "name": "Chord Atlas", "image": "03-chord-atlas.png", "purpose": "Explore common tones and voice leading between chords", "firstInteractionToPrototype": "Move E to E-flat while C and G stay anchored" }
+  ],
+  "recommendation": "Prototype A first for the clearest connection between audible partials and visual behavior; C is a complementary progression view. B is the most visually immersive exploration.",
+  "nextStepsAfterSelection": ["Build one working interaction for the selected direction", "Compare the same intervals and triads using pure, synthesized and sampled sound", "Validate the mapping and controls before expanding the UI"],
+  "reviewNotes": "These images are interface concepts, not calculated or measured scientific plots. The atlas note labels were corrected for Tonnetz adjacency; misleading terrain ratio markers were removed. Implementation should retain the existing keyboard shortcuts, all sound controls, explicit freeze and sound-follow behavior.",
+  "promptFiles": ["design-brief.json", "revision-prompts.json"],
+  "referenceFolder": "references"
+}
