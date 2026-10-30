@@ -16,6 +16,14 @@ describe('measured harmonic analysis', () => {
 		expect(peaks[1].amplitude / peaks[0].amplitude).toBeCloseTo(.24, 1);
 	});
 	it('returns no peaks for silence', () => expect(analyseSpectrum(new Float32Array(FFT_SIZE), 48000, 440, 'a')).toEqual([]));
+	it('covers both ends of the MIDI range instead of dropping low and high pure notes', () => {
+		for (const frequency of [440 * 2 ** (-69 / 12), 440 * 2 ** (58 / 12)]) {
+			const samples = Float32Array.from({ length: FFT_SIZE }, (_, i) => .5 * Math.sin(2 * Math.PI * frequency * i / 48000));
+			const peaks = analyseSpectrum(samples, 48000, frequency, 'edge');
+			expect(peaks.length).toBeGreaterThan(0);
+			expect(Math.abs(peaks[0].frequency - frequency)).toBeLessThan(.15);
+		}
+	});
 });
 
 describe('local roughness model', () => {

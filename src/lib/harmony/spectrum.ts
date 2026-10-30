@@ -40,7 +40,7 @@ export function analyseSpectrum(samples: Float32Array, sampleRate: number, funda
 	let peak = 0;
 	for (const value of magnitude) peak = Math.max(peak, value);
 	const found: Omit<Partial, 'id'>[] = [];
-	for (let bin = Math.max(2, Math.floor(20 * n / sampleRate)); bin < Math.min(n / 2 - 1, 12000 * n / sampleRate); bin++) {
+	for (let bin = Math.max(2, Math.floor(8 * n / sampleRate)); bin < Math.min(n / 2 - 1, 20000 * n / sampleRate); bin++) {
 		const value = magnitude[bin];
 		if (value < peak * .018 || value <= magnitude[bin - 1] || value <= magnitude[bin + 1]) continue;
 		const left = Math.log(Math.max(1e-12, magnitude[bin - 1])), center = Math.log(value), right = Math.log(Math.max(1e-12, magnitude[bin + 1]));

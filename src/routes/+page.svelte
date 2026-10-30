@@ -139,7 +139,7 @@
 		const retune=(note:PlotNote)=>({...note,frequency:tunedFrequency(note.midi,next[note.midi]??0)});
 		held=Object.fromEntries(liveNotes.map((note)=>[note.id,retune(note)]));
 		frozenNotes=frozenNotes.map(retune);retainedNotes=retainedNotes.map(retune);
-		scope?.clearSignals();audio?.setFrequencies(Object.values(held).map((note)=>({id:note.id,frequency:note.frequency})));
+		scope?.clearSignals();analysis?.retune();audio?.setFrequencies(Object.values(held).map((note)=>({id:note.id,frequency:note.frequency})));
 	}
 	function changeWorkspace(next:Workspace){workspace=next;if(next==='overtones'||next==='tuning')harmonicView=next;}
 	function workspaceKey(event:KeyboardEvent){

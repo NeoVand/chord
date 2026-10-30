@@ -20,6 +20,7 @@ export class SpectrumCapture {
 	private revision = 0;
 	private pending = '';
 	private measuredKey = '';
+	private measurementKey = '';
 	private lastKey = '';
 	private measurement: VoiceSpectrum[] = [];
 	private snapshot: HarmonicSnapshot = { revision: 0, source: 'preview', projected: false, voices: [] };
@@ -29,7 +30,7 @@ export class SpectrumCapture {
 			this.pending = '';
 			this.measuredKey = data.key;
 			// Keep the last meaningful capture after a finite sample has decayed.
-			if (data.voices.every((voice) => voice.partials.length)) this.measurement = data.voices;
+			if (data.voices.every((voice) => voice.partials.length)) { this.measurement = data.voices; this.measurementKey = data.key; }
 			this.lastKey = '';
 		};
 	}
@@ -53,7 +54,7 @@ export class SpectrumCapture {
 				this.worker.postMessage({ key: jobKey, notes: [...notes], channels, sampleRate: this.history.sampleRate }, channels.map((channel) => channel.buffer));
 			}
 		}
-		const key = `${signature}/${this.measuredKey}/${active}`;
+		const key = `${jobKey}/${this.measuredKey}/${active}`;
 		if (key === this.lastKey) return this.snapshot;
 		this.lastKey = key;
 		const matched = notes.length > 0 && notes.every((note) => this.measurement.some((voice) => voice.id === note.id));
@@ -62,14 +63,17 @@ export class SpectrumCapture {
 			const ratio = note.frequency / voice.note.frequency;
 			return { id: note.id, note, partials: voice.partials.map((partial) => ({ ...partial, frequency: partial.frequency * ratio })) };
 		}) : previewSpectrum(notes, mode);
-		this.snapshot = { revision: ++this.revision, source: matched ? 'captured' : active ? 'waiting' : 'preview',
+		const awaitingGeneration = active && generation !== null && this.measurementKey !== jobKey;
+		this.snapshot = { revision: ++this.revision, source: matched ? awaitingGeneration ? 'waiting' : 'captured' : active ? 'waiting' : 'preview',
 			projected: matched && notes.some((note) => this.measurement.find((voice) => voice.id === note.id)!.note.frequency !== note.frequency), voices };
 		return this.snapshot;
 	}
 	clear(): void {
-		this.epoch++; this.history.invalidate(); this.measurement = []; this.pending = ''; this.measuredKey = ''; this.lastKey = '';
+		this.epoch++; this.history.invalidate(); this.measurement = []; this.pending = ''; this.measuredKey = ''; this.measurementKey = ''; this.lastKey = '';
 	}
 	/** Keep the visible measurement until a new complete window can replace it. */
 	recapture(): void { this.epoch++; this.history.clear(); this.pending = ''; this.measuredKey = ''; this.lastKey = ''; }
+	/** Reject queued pre-glide PCM but preserve the last spectrum for projection. */
+	retune(): void { this.epoch++; this.history.invalidate(); this.pending = ''; this.measuredKey = ''; this.lastKey = ''; }
 	dispose(): void { this.worker.terminate(); this.history.clear(); }
 }

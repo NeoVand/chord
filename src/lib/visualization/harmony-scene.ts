@@ -11,8 +11,8 @@ import { SoundActivity } from './activity';
 const TAU = Math.PI * 2;
 const palette = NOTE_COLORS.map((value) => new THREE.Color(value));
 const spiralPosition = (frequency: number) => {
-	const octave = Math.log2(Math.max(27.5, frequency) / 55);
-	const radius = .65 + (octave + 1) * .43;
+	const octave = Math.log2(Math.max(8, frequency) / 55);
+	const radius = .8 + (octave + 3) * .36;
 	return new THREE.Vector3(radius * Math.cos(octave * TAU - Math.PI / 2), radius * Math.sin(octave * TAU - Math.PI / 2), 0);
 };
 
@@ -78,7 +78,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		const sprite = new THREE.Sprite(material); sprite.position.copy(position); sprite.scale.set(size * 4, size, 1); scene.add(sprite);
 		return sprite;
 	}
-	const spiralPoints = Array.from({ length: 2401 }, (_, i) => spiralPosition(27.5 * 2 ** (i / 2400 * 9)));
+	const spiralPoints = Array.from({ length: 3201 }, (_, i) => spiralPosition(8 * 2 ** (i / 3200 * 11.3)));
 	scenes.overtones.add(new THREE.Line(ownGeometry(new THREE.BufferGeometry().setFromPoints(spiralPoints)), gridMaterial));
 	for (let semitone = 0; semitone < 12; semitone++) {
 		const angle = semitone / 12 * TAU - Math.PI / 2;
@@ -86,8 +86,8 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		scenes.overtones.add(new THREE.Line(ownGeometry(new THREE.BufferGeometry().setFromPoints([direction.clone().multiplyScalar(.5), direction.clone().multiplyScalar(4.8)])), gridMaterial));
 		label(['A', 'B♭', 'B', 'C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭'][semitone], direction.clone().multiplyScalar(5.05), scenes.overtones, '#999999', .38);
 	}
-	for (let octave = 1; octave < 8; octave++) label(`A${octave}`, new THREE.Vector3(.26, -(.65 + octave * .43), -.02), scenes.overtones, '#818181', .28);
-	label('55 Hz', new THREE.Vector3(0, .04, .05), scenes.overtones, '#aaaaaa', .3);
+	for (let octave = -1; octave < 9; octave++) label(`A${octave}`, new THREE.Vector3(.26, spiralPosition(55 * 2 ** (octave - 1)).y, -.02), scenes.overtones, '#818181', .28);
+	label('OCTAVES', new THREE.Vector3(0, .04, .05), scenes.overtones, '#999999', .26);
 
 	const surfaceGroup = new THREE.Group(); scenes.tuning.add(surfaceGroup);
 	const terrainMaterial = ownMaterial(new THREE.MeshStandardNodeMaterial({ roughness: .85, metalness: .16, side: THREE.DoubleSide }));
