@@ -4,6 +4,8 @@ A playable instrument for exploring harmony through sound and geometry. Four con
 
 [Play Chord](https://neovand.github.io/chord/) · [Architecture and design decisions](docs/architecture.md)
 
+![Overtones workspace](design/implementation-2026-10-30/overtones.png)
+
 ## Four views, one instrument
 
 - **Overtones** places measured spectral peaks on a log-frequency spiral: one turn per octave. Select a nearby pair to inspect its frequency difference, slow its beat animation, and align the peaks by retuning a voice.
