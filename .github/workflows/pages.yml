@@ -17,6 +17,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -29,21 +33,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm check
+        if: matrix.shard == 1
       - run: pnpm lint
+        if: matrix.shard == 1
       - run: pnpm test:unit --run
-      - run: pnpm test:e2e
+        if: matrix.shard == 1
+      - run: pnpm exec playwright test --shard=${{ matrix.shard }}/2
       - name: Preserve browser failure details
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-failure-details
+          name: browser-failure-details-${{ matrix.shard }}
           path: test-results
           if-no-files-found: ignore
       - name: Build Pages artifact
+        if: matrix.shard == 1
         env:
           BASE_PATH: /chord
         run: pnpm build
       - uses: actions/upload-pages-artifact@v5
+        if: matrix.shard == 1
         with:
           path: build
 

@@ -2,6 +2,8 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
 	testDir: './tests',
+	// Each test owns its page/audio context; distribute tests across CI runners.
+	fullyParallel: true,
 	workers: 1,
 	reporter: 'list',
 	timeout: process.env.CI ? 90_000 : 60_000,
