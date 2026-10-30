@@ -77,6 +77,13 @@ export class StableCapture {
 				return value;
 			});
 		});
+		if (peak < 1e-6 && this.snapshot) {
+			// Explicit recapture after a piano decay should not replace a useful
+			// shape with an empty point. A new audible generation can replace it.
+			this.pending = false;
+			this.status = 'ready';
+			return this.snapshot;
+		}
 		this.snapshot = {
 			revision: ++this.revision, notes, duration, peak, preview: false,
 			sample(lane, seconds) {

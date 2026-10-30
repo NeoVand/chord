@@ -63,4 +63,13 @@ describe('complete fixed signal captures', () => {
 		expect(capture.update({ ...state, frozen: true })).toBe(snapshot);
 		expect(capture.status).toBe('ready');
 	});
+	it('retains a meaningful capture when recapturing after a sample has decayed', () => {
+		const capture = new StableCapture();
+		push(capture, 0, 8192);
+		const snapshot = capture.update(state);
+		capture.recapture();
+		push(capture, 8192, 8192, 1, 0);
+		expect(capture.update(state)).toBe(snapshot);
+		expect(capture.status).toBe('ready');
+	});
 });

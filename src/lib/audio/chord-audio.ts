@@ -198,18 +198,19 @@ export class ChordAudio {
 
 	/** Glide every affected voice on the same audio clock without rearticulating. */
 	setFrequencies(updates: { id: string; frequency: number }[]): void {
+		const frequencies = new Map(updates.filter(({ frequency }) => Number.isFinite(frequency) && frequency > 0).map(({ id, frequency }) => [id, clamp(frequency, 8, 20000)]));
+		if (![...this.#held.values()].some((request) => frequencies.has(request.id) && frequencies.get(request.id) !== request.frequency)) return;
 		const time = this.#context?.currentTime ?? 0;
-		for (const { id, frequency } of updates) {
-			if (!Number.isFinite(frequency) || frequency <= 0) continue;
-			const request = this.#held.get(id);
-			if (!request || request.frequency === frequency) continue;
-			request.frequency = clamp(frequency, 8, 20000);
+		for (const request of this.#held.values()) {
+			const frequency = frequencies.get(request.id) ?? request.frequency;
+			const changed = request.frequency !== frequency;
+			request.frequency = frequency;
 			const playing = this.#slots.find((voice) => voice?.request === request);
 			if (!playing) continue;
-			playing.voice.retune(request.frequency, time);
+			if (changed) playing.voice.retune(request.frequency, time);
 			playing.version = ++this.#voiceVersion;
-			// New analysis windows exclude the pitch glide; stale PCM cannot masquerade as a new tuning.
-			this.#assign(playing.slot, playing.version, id, request.frequency, time + .06);
+			// Start a common analysis window, including unchanged chord members.
+			this.#assign(playing.slot, playing.version, request.id, request.frequency, time + .06);
 		}
 	}
 

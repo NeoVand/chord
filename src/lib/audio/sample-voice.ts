@@ -25,7 +25,7 @@ export function sampleVoice(context: BaseAudioContext, destination: AudioNode, a
 		source.loopEnd = region.loopAuto ? region.loopAuto.endRatio * buffer.duration : params.loopEnd ?? buffer.duration;
 		const gain = context.createGain();
 		// Preserve MIDI Lab/smplr Soundfont's velocity law and output gain.
-		gain.gain.value = (velocity / 127) ** 2 * 10 ** ((params.volume ?? 0) / 20) * 5;
+		gain.gain.value = (velocity / 127) ** 2 * 10 ** ((params.volume ?? 0) / 20) * 5 * (100 / 127) ** 2;
 		const envelope = context.createGain();
 		const attack = params.ampAttack ?? 0;
 		envelope.gain.setValueAtTime(attack > 0 ? 0 : 1, time);

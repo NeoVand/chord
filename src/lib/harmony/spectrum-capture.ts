@@ -35,6 +35,8 @@ export class SpectrumCapture {
 	}
 	push(chunk: SignalChunk): void { this.history.push(chunk); }
 	read(notes: readonly PlotNote[], mode: SignalMode, active: boolean): HarmonicSnapshot {
+		// The UI owns reactive proxies. Workers and retained snapshots own plain data.
+		notes = notes.map((note) => ({ id: note.id, midi: note.midi, frequency: note.frequency, label: note.label }));
 		const ids = notes.map((note) => note.id);
 		const generation = this.history.generation(ids);
 		const signature = `${this.epoch}/${mode}/${notes.map((note) => `${note.id}:${note.frequency}`).join(',')}`;

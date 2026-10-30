@@ -102,6 +102,12 @@ describe('actual audio voices', () => {
 			const second = latest.channels[latest.voiceIds.indexOf('fifth')];
 			expect(first.some((sample) => Math.abs(sample) > 0.05)).toBe(true);
 			expect(first.some((sample, i) => Math.abs(sample - second[i]) > 0.05)).toBe(true);
+			audio.setFrequencies([{ id: 'root', frequency: 466.16 }]);
+			await pause(120);
+			const tuned = chunks.at(-1)!;
+			expect(tuned.frequencies[tuned.voiceIds.indexOf('root')]).toBe(466.16);
+			// The unchanged fifth joins the new analysis generation too.
+			expect(tuned.versions![tuned.voiceIds.indexOf('fifth')]).toBeGreaterThan(latest.versions![latest.voiceIds.indexOf('fifth')]);
 			audio.setProgram(16);
 			audio.setSource('synth');
 			await pause(100);
