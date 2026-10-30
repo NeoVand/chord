@@ -4,12 +4,13 @@
  * bus; one AudioWorklet captures all buses on the same sample clock. The plot
  * therefore receives actual instrument harmonics, never reconstructed sines.
  */
-import type { Smplr } from 'smplr';
+import { asset } from '$app/paths';
 import type { AudioStatus, SignalChunk, SoundSource } from '../types';
 import { SampleBank } from './sample-bank';
 import { presetForProgram } from './presets';
 import { GM_PROGRAMS } from './programs';
 import { synthVoice, makeNoise, type SoundingVoice } from './voice';
+import { sampleVoice } from './sample-voice';
 
 const VOICES = 8;
 interface Request { id: string; note: number; velocity: number; frequency: number; revision: number }
@@ -103,8 +104,7 @@ export class ChordAudio {
 		this.#analyser = analyser;
 		this.#noise = makeNoise(context);
 		this.#bank = new SampleBank(context);
-		const base = import.meta.env.BASE_URL;
-		await context.audioWorklet.addModule(new URL(`${base}worklets/voice-capture.js`, window.location.href).href);
+		await context.audioWorklet.addModule(new URL(asset('worklets/voice-capture.js'), window.location.href).href);
 		if (this.#disposed) return;
 		const merger = context.createChannelMerger(VOICES);
 		const capture = new AudioWorkletNode(context, 'chord-voice-capture', {
@@ -196,6 +196,23 @@ export class ChordAudio {
 		this.#master?.gain.setTargetAtTime(this.#volume, this.#context!.currentTime, 0.02);
 	}
 
+	/** Glide every affected voice on the same audio clock without rearticulating. */
+	setFrequencies(updates: { id: string; frequency: number }[]): void {
+		const time = this.#context?.currentTime ?? 0;
+		for (const { id, frequency } of updates) {
+			if (!Number.isFinite(frequency) || frequency <= 0) continue;
+			const request = this.#held.get(id);
+			if (!request || request.frequency === frequency) continue;
+			request.frequency = clamp(frequency, 8, 20000);
+			const playing = this.#slots.find((voice) => voice?.request === request);
+			if (!playing) continue;
+			playing.voice.retune(request.frequency, time);
+			playing.version = ++this.#voiceVersion;
+			// New analysis windows exclude the pitch glide; stale PCM cannot masquerade as a new tuning.
+			this.#assign(playing.slot, playing.version, id, request.frequency, time + .06);
+		}
+	}
+
 	#isCurrent(request: Request) { return !this.#disposed && this.#held.get(request.id) === request; }
 	#time() {
 		const context = this.#context!;
@@ -234,36 +251,25 @@ export class ChordAudio {
 	async #replaceWithSample(playing: Playing, program: number, scheduledTime: number) {
 		const context = this.#context!;
 		const gate = context.createGain();
-		let sampler: Smplr | undefined;
 		try {
-			sampler = await this.#bank!.player(program, gate);
+			const asset = await this.#bank!.load(program);
 			this.#readyPrograms.add(program);
 			if (!this.#isCurrent(playing.request) || this.#source !== 'sampled' || this.#program !== program || this.#slots[playing.slot] !== playing) {
-				sampler.dispose(); gate.disconnect(); return;
+				gate.disconnect(); return;
 			}
 			// Cached recordings retain the chord's shared attack clock. A download
 			// that completes later gets a fresh future start, never a backdated one.
 			const time = scheduledTime >= context.currentTime + .004 ? scheduledTime : this.#time();
 			const { request, slot } = playing;
+			const voice = sampleVoice(context, gate, asset, request.note, request.frequency, request.velocity, time);
 			this.#remove(playing);
 			gate.connect(this.#buses[slot]);
-			const stop = sampler.start({
-				note: request.note, velocity: request.velocity, time, stopId: request.id,
-				detune: 1200 * Math.log2(request.frequency / midiFrequency(request.note)), ampRelease: 0.25
-			});
-			const player = sampler;
-			let released = false;
-			const voice: SoundingVoice = {
-				release(at) { if (!released) { stop(at); released = true; } return at + 0.4; },
-				stop(at) { stop(at); },
-				dispose() { player.dispose(); }
-			};
 			const next: Playing = { request, slot, voice, gate, source: 'sampled', version: ++this.#voiceVersion };
 			this.#slots[slot] = next;
 			this.#assign(slot, next.version, request.id, request.frequency, time);
 			this.#updateStatus();
 		} catch {
-			sampler?.dispose(); gate.disconnect();
+			gate.disconnect();
 			this.#failedPrograms.add(program);
 			if (this.#program === program && !this.#disposed) this.#updateStatus();
 		}

@@ -19,7 +19,7 @@ export function soundfontName(program: number): string | null {
 	return available.has(name) ? name : null;
 }
 
-interface SampleAsset { preset: SmplrPreset; buffers: Map<string, AudioBuffer> }
+export interface SampleAsset { preset: SmplrPreset; buffers: Map<string, AudioBuffer> }
 
 export class SampleBank {
 	#cache = new Map<number, Promise<SampleAsset>>();

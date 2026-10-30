@@ -6,6 +6,7 @@
 import type { Preset } from './presets';
 
 export interface SoundingVoice {
+	retune(frequency: number, time: number): void;
 	release(time: number): number;
 	stop(time: number): void;
 	dispose(): void;
@@ -99,6 +100,12 @@ export function synthVoice(
 		}
 	}
 	return {
+		retune(next, at) {
+			for (const source of sources) if (source instanceof OscillatorNode) {
+				source.frequency.cancelScheduledValues(at);
+				source.frequency.setTargetAtTime(next, at, .012);
+			}
+		},
 		release(at) {
 			if (released) return finish;
 			released = true;

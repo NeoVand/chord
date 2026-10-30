@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { synthVoice } from './voice';
+import { sampleVoice } from './sample-voice';
 import { presetForProgram } from './presets';
 import { ChordAudio } from './chord-audio';
 import type { SignalChunk } from '../types';
@@ -49,6 +50,26 @@ function sampleWav(frequency: number, thirdHarmonic: number) {
 }
 
 describe('actual audio voices', () => {
+	it('glides existing oscillator and sampled voices without restarting their audio clock', async () => {
+		const context = new OfflineAudioContext(2, 48000, 48000);
+		const merger = context.createChannelMerger(2); merger.connect(context.destination);
+		const pure = context.createGain(), recorded = context.createGain();
+		pure.connect(merger, 0, 0); recorded.connect(merger, 0, 1);
+		const buffer = context.createBuffer(1, 48000, 48000);
+		for (let i = 0; i < 48000; i++) buffer.getChannelData(0)[i] = .1 * Math.sin(2 * Math.PI * 440 * i / 48000);
+		const first = synthVoice(context, pure, 440, 100, 0, presetForProgram(16), null, true);
+		const second = sampleVoice(context, recorded, { buffers: new Map([['a', buffer]]), preset: {
+			samples: { baseUrl: '', formats: [] }, groups: [{ regions: [{ sample: 'a', keyRange: [0, 127], pitch: 69, loop: true }] }]
+		} }, 69, 440, 100, 0);
+		first.retune(466.16, .4); second.retune(466.16, .4);
+		const rendered = await context.startRendering();
+		for (let channel = 0; channel < 2; channel++) {
+			const samples = rendered.getChannelData(channel);
+			const before = samples.slice(4800, 14400), after = samples.slice(28800, 43200);
+			expect(amplitude(before, 440)).toBeGreaterThan(.04);
+			expect(amplitude(after, 466.16) / amplitude(after, 440)).toBeGreaterThan(10);
+		}
+	});
 	it('pure mode sounds as a sine while instrument mode retains its harmonics', async () => {
 		const context = new OfflineAudioContext(2, 48000, 48000);
 		const merger = context.createChannelMerger(2);
