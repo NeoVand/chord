@@ -1,12 +1,13 @@
 import type { VoiceSpectrum } from './types';
 
 /** Sethares' Plomp–Levelt kernel, with minimum-amplitude weighting.
+ * The constant gain of five is omitted because surface height is relative.
  * https://sethares.engr.wisc.edu/comprog.html
  * This describes local sensory roughness, not musical quality or preference.
  */
 export function roughnessPair(a: number, b: number): number {
 	const separation = .24 * Math.abs(a - b) / (.0207 * Math.min(a, b) + 18.96);
-	return Math.exp(-3.5 * separation) - Math.exp(-5.75 * separation);
+	return Math.exp(-3.51 * separation) - Math.exp(-5.75 * separation);
 }
 
 export function roughness(voices: readonly VoiceSpectrum[], offsets: readonly number[] = []): number {
