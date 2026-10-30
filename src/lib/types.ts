@@ -63,6 +63,8 @@ export interface ScopeController {
 
 export interface ScopeOptions {
 	getState(): PlotState;
+	/** Keep capture alive while avoiding GPU work in another workspace. */
+	isVisible?(): boolean;
 	getOutputLevel?(): number;
 	onStatus?(status: 'webgpu' | 'webgl' | 'unavailable'): void;
 	onZoom?(magnification: number): void;

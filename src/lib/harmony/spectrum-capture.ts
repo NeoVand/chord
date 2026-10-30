@@ -67,5 +67,7 @@ export class SpectrumCapture {
 	clear(): void {
 		this.epoch++; this.history.invalidate(); this.measurement = []; this.pending = ''; this.measuredKey = ''; this.lastKey = '';
 	}
+	/** Keep the visible measurement until a new complete window can replace it. */
+	recapture(): void { this.epoch++; this.history.clear(); this.pending = ''; this.measuredKey = ''; this.lastKey = ''; }
 	dispose(): void { this.worker.terminate(); this.history.clear(); }
 }

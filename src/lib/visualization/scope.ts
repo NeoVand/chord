@@ -252,13 +252,13 @@ export async function createScope(canvas: HTMLCanvasElement, options: ScopeOptio
 		if (disposed) return;
 		frame = requestAnimationFrame(animate);
 		const dt = Math.min((now - lastTime) / 1000, .1); lastTime = now;
-		if (document.hidden) return;
 		const state = options.getState();
+		const snapshot = capture.update(state);
+		if (capture.status !== lastCapture) { lastCapture = capture.status; options.onCapture?.(capture.status); }
+		if (document.hidden || options.isVisible?.() === false) return;
 		follower.update(options.getOutputLevel?.() ?? 0, dt);
 		if (!state.frozen) activity.value = state.followSound ? follower.level : 1;
 		const moving = !state.frozen && (!state.followSound || follower.audible);
-		const snapshot = capture.update(state);
-		if (capture.status !== lastCapture) { lastCapture = capture.status; options.onCapture?.(capture.status); }
 		const signature = snapshot ? `${snapshot.revision}/${state.view}` : '';
 		if (signature !== pathSignature) {
 			pathSignature = signature;
