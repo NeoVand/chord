@@ -68,6 +68,16 @@ Use semantic SVG for the small interactive Tonnetz and circle so labels, focus t
 
 Each coherent stage is committed and pushed after its relevant checks. Prefer meaningful commits over an arbitrary count. GitHub Actions checks types, lint, unit/audio behavior and production output before deploying main to Pages. Browser regressions exercise the integration. The final site must load JavaScript, fonts and the AudioWorklet correctly under `/chord/`.
 
+## Bringing Scope into the shared instrument
+
+The original Scope needs the same architectural treatment as the newer workspaces. Its renderer must not own audio history, capture readiness or an independent sound-following clock. A per-instance `InspectionSession` will own the PCM history, immutable capture, spectral worker and visual transport. Scope, miniature waveforms, Overtones and Tuning consume that session. The live output spectrum remains a separate, explicitly labelled view of the master output.
+
+The capture publishes enough aligned samples for both the curve and FFT. Recapture, instrument changes and retuning invalidate this shared pipeline once; a stale analysis job cannot replace a newer capture. Freeze and Follow sound have one clock and envelope across workspaces. A renderer can be unavailable or hidden without interrupting acquisition or changing what Stop retains.
+
+Scope gets its own retained view component and an inspector with explicit X/Y/Z note assignments, shared fine tuning, miniature waveforms and live spectrum. Waveform mode shows all selected voices. Axis choices preserve valid note identities across retuning and fill missing slots when the selection changes. Replay and Recapture are available through the same controls as the harmonic workspaces; small screens keep the inspector reachable.
+
+Follow-up delivery: (1) shared capture/transport contracts and deterministic tests; (2) renderer and Svelte integration, including progression-duration ownership; (3) Scope inspection controls, responsive visibility and cross-workspace regressions; (4) publish and verify the deployed build.
+
 ## References
 
 - [Selected interface concepts](../design/futures-2026-10-30/selection.json)
