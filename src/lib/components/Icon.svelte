@@ -23,12 +23,13 @@
 	import CircleHelp from '@lucide/svelte/icons/circle-help';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
 	import Check from '@lucide/svelte/icons/check';
+	import Github from '@lucide/svelte/icons/github';
 	let { name, size = 18 }: { name: string; size?: number } = $props();
 	const icons = {
 		play:Play, pause:Pause, stop:Square, chevron:ChevronDown, left:ChevronLeft, right:ChevronRight,
 		volume:Volume2, midi:Cable, keyboard:Piano, typing:Keyboard, freeze:Pause, orbit:Orbit,
 		reset:RotateCcw, 'zoom-in':Plus, 'zoom-out':Minus, capture:Scan, fit:Focus, expand:Maximize,
-		collapse:Minimize, close:X, search:Search, wave:AudioWaveform, info:CircleHelp, panel:PanelLeft, check:Check
+		collapse:Minimize, close:X, search:Search, wave:AudioWaveform, info:CircleHelp, panel:PanelLeft, check:Check, github:Github
 	};
 	const Glyph = $derived(icons[name as keyof typeof icons] ?? AudioWaveform);
 </script>
