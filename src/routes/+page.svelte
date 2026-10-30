@@ -7,10 +7,24 @@
 	import VoicePicker from '#lib/components/VoicePicker.svelte';
 	import Spectrum from '#lib/components/Spectrum.svelte';
 	import SignalTraces from '#lib/components/SignalTraces.svelte';
+	import HarmonyView from '#lib/components/HarmonyView.svelte';
+	import ChordAtlas from '#lib/components/ChordAtlas.svelte';
+	import { SpectrumCapture } from '#lib/harmony/spectrum-capture.ts';
+	import { tunedFrequency, clampCents } from '#lib/harmony/tuning.ts';
+	import { SoundActivity } from '#lib/visualization/activity.ts';
+	import type { Workspace, HarmonicSnapshot } from '#lib/harmony/types.ts';
 	import { ChordAudio } from '#lib/audio/chord-audio.ts';
-	import { FIFTHS, SCALES, INTERVALS, NOTE_COLORS, midiToFrequency, noteName, scaleNotes, scaleNames, diatonicChords, type Chord } from '#lib/music/theory.ts';
+	import { FIFTHS, SCALES, INTERVALS, NOTE_COLORS, noteName, scaleNotes, scaleNames, diatonicChords, type Chord } from '#lib/music/theory.ts';
 	import type { PlotNote, PlotView, SignalMode, ScopeController, AudioStatus } from '#lib/types.ts';
 
+	let workspace = $state<Workspace>('overtones');
+	let harmonicSpeed = $state(.1);
+	let centsByMidi = $state<Record<number,number>>({});
+	let spectrum = $state.raw<HarmonicSnapshot>({revision:0,source:'preview',projected:false,voices:[]});
+	let stopToken = $state(0);
+	let audible = $state(false);
+	let analysis: SpectrumCapture | null = null;
+	const outputActivity = new SoundActivity();
 	let root = $state(0);
 	let scaleId = $state('major');
 	let explorerTab = $state<'chords' | 'intervals'>('chords');
@@ -53,7 +67,7 @@
 	let chordTimer: ReturnType<typeof setTimeout> | undefined;
 	const physical = new SvelteSet<string>();
 	const pedal = new SvelteSet<string>();
-	const previewNotes: PlotNote[] = [48,52,55].map((midi,i) => ({id:`preview:${i}`,midi,frequency:midiToFrequency(midi),label:noteName(midi)}));
+	const previewNotes = $derived([48,52,55].map((midi,i) => ({id:`preview:${i}`,midi,frequency:tunedFrequency(midi,centsByMidi[midi]??0),label:noteName(midi)})));
 	const scale = $derived(SCALES.find((item) => item.id === scaleId) ?? SCALES[0]);
 	const tonic = $derived(FIFTHS.find((key) => key.root === root)?.label ?? 'C');
 	const pitches = $derived(scaleNotes(root,scaleId));
@@ -78,6 +92,7 @@
 	function playVoice(note: PlotNote, strike=96, options?: {retriggerHeld?: boolean}) { void audio?.noteOn(note.id,note.midi,strike,note.frequency,options).catch(fail); }
 	function stopVoices() { clearTimeout(chordTimer); audio?.allNotesOff(); held={}; physical.clear(); pedal.clear(); }
 	function stopSound() {
+		stopToken++;
 		if(hasPlayed && plotNotes.length && captureState==='ready')retainedNotes=plotNotes.map((note)=>({...note}));
 		else if(hasPlayed){retainedNotes=[];frozenNotes=[];}
 		stopVoices();
@@ -86,29 +101,55 @@
 		if(sounding&&frozen)frozenNotes=liveNotes.map((note)=>({...note}));
 		else if(hasPlayed&&!sounding){retainedNotes=[];frozenNotes=[];selectionTitle='';}
 	}
-	function makeNote(midi: number,id: string): PlotNote { return {id,midi,frequency:midiToFrequency(midi),label:noteName(midi)}; }
-	function playNotes(notes: number[],label: string) {
+	function makeNote(midi: number,id: string): PlotNote { return {id,midi,frequency:tunedFrequency(midi,centsByMidi[midi]??0),label:noteName(midi)}; }
+	function playNotes(notes: number[],label: string,sequence=false,preserveTuning=false) {
+		if(!sequence)stopToken++;
+		if(!preserveTuning)centsByMidi={};
+		analysis?.clear();scope?.clearSignals();
 		stopVoices();retainedNotes=[];hasPlayed=true; notice=''; selectionTitle=label;
 		const next=Object.fromEntries(notes.map((midi,i)=>{const note=makeNote(midi,`chord:${i}:${midi}`);return [note.id,note];}));
 		held=next;if(frozen)frozenNotes=Object.values(next).map((note)=>({...note})); for(const note of Object.values(next)) playVoice(note,velocity??88);
 		if(!latch) chordTimer=setTimeout(()=>{if(!latch) stopSound();},1400);
 	}
-	function playChord(chord: Chord) {
+	function playChord(chord: Chord,preserveTuning=false) {
 		selectedChord=chord.name;
 		const rootName=chord.name.replace(/(?:dim|sus2|sus4|m|\+)$/,'');
-		playNotes(chord.notes,`${rootName} ${chord.quality}`);
+		playNotes(chord.notes,`${rootName} ${chord.quality}`,false,preserveTuning);
 	}
 	function chooseKey(nextRoot: number,nextScale=scaleId) {
 		root=nextRoot; scaleId=nextScale;
 		const chord=diatonicChords(root,scaleId)[0];
 		if(explorerTab==='intervals') playInterval(selectedInterval); else if(chord) playChord(chord);
 	}
-	function playInterval(semitones: number) {
+	function playInterval(semitones: number,preserveTuning=false) {
 		selectedInterval=semitones; selectedChord='';
-		playNotes([48+root,48+root+semitones],INTERVALS.find((item)=>item.semitones===semitones)?.label ?? 'Interval');
+		playNotes([48+root,48+root+semitones],INTERVALS.find((item)=>item.semitones===semitones)?.label ?? 'Interval',false,preserveTuning);
 	}
-	function playPreview() { const chord=chords.find((item)=>item.name===selectedChord)??chords[0]; if(explorerTab==='intervals')playInterval(selectedInterval);else if(chord)playChord(chord); }
+	function playPreview() {
+		if(hasPlayed&&plotNotes.length){playNotes(plotNotes.map((note)=>note.midi),selectionTitle,false,true);return;}
+		const chord=chords.find((item)=>item.name===selectedChord)??chords[0];
+		if(explorerTab==='intervals')playInterval(selectedInterval,true);else if(chord)playChord(chord,true);
+	}
+	function tuneNotes(updates: {id:string;cents:number}[]) {
+		const available=[...plotNotes,...liveNotes];const next={...centsByMidi};
+		for(const update of updates){const note=available.find((item)=>item.id===update.id);if(note)next[note.midi]=clampCents(update.cents);}
+		if(Object.keys(next).every((midi)=>next[Number(midi)]===(centsByMidi[Number(midi)]??0)))return;
+		centsByMidi=next;
+		const retune=(note:PlotNote)=>({...note,frequency:tunedFrequency(note.midi,next[note.midi]??0)});
+		held=Object.fromEntries(liveNotes.map((note)=>[note.id,retune(note)]));
+		frozenNotes=frozenNotes.map(retune);retainedNotes=retainedNotes.map(retune);
+		scope?.clearSignals();audio?.setFrequencies(Object.values(held).map((note)=>({id:note.id,frequency:note.frequency})));
+	}
+	function changeWorkspace(next:Workspace){workspace=next;}
+	function workspaceKey(event:KeyboardEvent){
+		const tabs:Workspace[]=['overtones','tuning','chords','scope'];const index=tabs.indexOf(workspace);
+		const target=event.key==='ArrowRight'?tabs[(index+1)%4]:event.key==='ArrowLeft'?tabs[(index+3)%4]:event.key==='Home'?tabs[0]:event.key==='End'?tabs[3]:null;
+		if(target){event.preventDefault();workspace=target;document.getElementById(`tab-${target}`)?.focus();}
+	}
+	function playAtlas(notes:number[],label:string,sequence=false){selectedChord='';playNotes(notes,label,sequence);}
+	function harmonyStatus(status:string){gpuStatus=status==='webgpu'?'WebGPU':status==='webgl'?'WebGL fallback':'Renderer unavailable';}
 	function noteOn(midi: number,strike: number,id: string) {
+		stopToken++;
 		clearTimeout(chordTimer);retainedNotes=[]; hasPlayed=true; notice='';
 		if(Object.keys(held).some((key)=>key.startsWith('chord:'))) stopVoices();
 		const existing=Object.values(held).find((note)=>note.midi===midi&&!physical.has(note.id));
@@ -116,14 +157,14 @@
 		if(latch && existing && !id.startsWith('midi:')) {
 			audio?.noteOff(existing.id);
 			const previous=Object.values(held);const next={...held};delete next[existing.id];held=next;
-			if(Object.keys(next).length){scope?.clearSignals();audio?.retriggerHeld();selectionTitle=Object.values(next).map((note)=>note.label).join(' · ');if(frozen)frozenNotes=Object.values(next).map((note)=>({...note}));}
+			if(Object.keys(next).length){scope?.clearSignals();analysis?.clear();audio?.retriggerHeld();selectionTitle=Object.values(next).map((note)=>note.label).join(' · ');if(frozen)frozenNotes=Object.values(next).map((note)=>({...note}));}
 			else retainedNotes=previous;
 			return;
 		}
 		if(!held[id] && Object.keys(held).length>=8){const oldest=Object.keys(held)[0];audio?.noteOff(oldest);const remaining={...held};delete remaining[oldest];held=remaining;physical.delete(oldest);}
 		const note=makeNote(midi,id); held={...held,[id]:note};
 		const retriggerHeld=latch&&!id.startsWith('midi:');
-		if(retriggerHeld)scope?.clearSignals();
+		if(retriggerHeld){scope?.clearSignals();analysis?.clear();}
 		playVoice(note,strike,{retriggerHeld});
 		if(frozen)frozenNotes=Object.values(held).map((item)=>({...item}));
 		selectedChord=''; selectionTitle=Object.values(held).map((item)=>item.label).join(' · ');
@@ -141,19 +182,19 @@
 	function toggleFreeze() { if(!frozen) frozenNotes=plotNotes.map((note)=>({...note})); else if(!selectedChord && liveNotes.length)selectionTitle=liveNotes.map((note)=>note.label).join(' · '); frozen=!frozen; }
 	function changeMode(next: SignalMode) {
 		if(next===mode)return;
-		prepareSourceChange();scope?.clearSignals();mode=next;
+		prepareSourceChange();scope?.clearSignals();analysis?.clear();mode=next;
 		if(next==='instrument')audio?.setProgram(program);
 		audio?.setSource(next==='pure'?'pure':instrumentEngine);
 	}
 	function changeEngine(next: 'sampled'|'synth') {
 		if(next===instrumentEngine)return;
 		instrumentEngine=next;
-		if(mode==='instrument'){prepareSourceChange();scope?.clearSignals();audio?.setSource(next);}
+		if(mode==='instrument'){prepareSourceChange();scope?.clearSignals();analysis?.clear();audio?.setSource(next);}
 	}
 	function changeProgram(next: number) {
 		if(next===program)return;
 		program=next;
-		if(mode==='instrument'){prepareSourceChange();scope?.clearSignals();audio?.setProgram(next);}
+		if(mode==='instrument'){prepareSourceChange();scope?.clearSignals();analysis?.clear();audio?.setProgram(next);}
 	}
 	function changeVolume(next: number) { volume=next;audio?.setVolume(next); }
 	async function fullscreen() { try { if(document.fullscreenElement)await document.exitFullscreen();else if(app?.requestFullscreen)await app.requestFullscreen();else immersive=!immersive; }catch { immersive=!immersive; } }
@@ -184,31 +225,35 @@
 	}
 	onMount(()=>{
 		let disposed=false;
-		audio=new ChordAudio({onChunk:(chunk)=>{scope?.push(chunk);},onStatus:(status)=>{audioStatus=status;}});
+		analysis=new SpectrumCapture();
+		audio=new ChordAudio({onChunk:(chunk)=>{scope?.push(chunk);analysis?.push(chunk);},onStatus:(status)=>{audioStatus=status;}});
 		audio.setVolume(volume); audio.setSource(instrumentEngine);
+		const readAnalysis=()=>{if(document.hidden)return;spectrum=analysis?.read(plotNotes,mode,hasPlayed)??spectrum;outputActivity.update(audio?.getOutputLevel()??0,.1);audible=outputActivity.audible;};
+		readAnalysis();const analysisTimer=setInterval(readAnalysis,100);
 		void import('#lib/visualization/scope.ts').then(async ({createScope})=>{
 			if(!canvas||disposed)return;
 			const renderer=await createScope(canvas,{
 				getState:()=>({view,mode,notes:plotNotes,speed,frozen,followSound,trail,autoRotate,active:hasPlayed}),
 				getOutputLevel:()=>audio?.getOutputLevel?.()??0,
+					isVisible:()=>workspace==='scope',
 				onStatus:(status)=>{gpuStatus=status==='webgpu'?'WebGPU':status==='webgl'?'WebGL fallback':'Renderer unavailable';},
 				onZoom:(zoom)=>{magnification=zoom;},
 				onCapture:(status)=>{captureState=status;}
 			});
 			if(disposed)renderer.dispose();else scope=renderer;
 		}).catch((error)=>{gpuStatus='Renderer unavailable';fail(error);});
-		return()=>{disposed=true;clearTimeout(chordTimer);scope?.dispose();audio?.dispose();for(const input of midi?.inputs.values()??[])input.onmidimessage=null;if(midi)midi.onstatechange=null;};
+		return()=>{disposed=true;clearInterval(analysisTimer);analysis?.dispose();clearTimeout(chordTimer);scope?.dispose();audio?.dispose();for(const input of midi?.inputs.values()??[])input.onmidimessage=null;if(midi)midi.onstatechange=null;};
 	});
 </script>
 
-<svelte:head><title>Chord — sound in shape</title><meta name="description" content="Play notes, intervals and chords. Explore their sound as living two- and three-dimensional Lissajous curves." /></svelte:head>
+<svelte:head><title>Chord — sound in shape</title><meta name="description" content="One playable instrument, four ways to explore sound: measured overtones, tuning terrain, chord relationships, and waveform or Lissajous scopes." /></svelte:head>
 <svelte:window onkeydown={globalKey} onblur={stopSound} />
 <svelte:document onvisibilitychange={()=>{if(document.hidden)stopSound();}} onfullscreenchange={()=>{fullscreenActive=!!document.fullscreenElement;}} />
 
-<main class={['app-shell',immersive&&'immersive']} {@attach captureApp}>
+<main class={['app-shell',workspace!=='scope'&&'harmony-workspace',immersive&&'immersive']} {@attach captureApp}>
 	<header class="app-header">
 		<div class="brand"><span class="brand-mark"><Icon name="wave" size={25} /></span><span>chord</span><span class="brand-divider"></span><span class="brand-caption">Sound in shape</span></div>
-		<div class="view-tabs" aria-label="Visualization view">{#each [{id:'waveform',label:'Waveform'},{id:'2d',label:'2D'},{id:'3d',label:'3D'}] as tab (tab.id)}<button type="button" class={view===tab.id?'active':''} aria-pressed={view===tab.id} onclick={()=>changeView(tab.id as PlotView)}>{tab.label}</button>{/each}</div>
+		<div class="workspace-tabs" role="tablist" aria-label="Workspace">{#each [{id:'overtones',label:'Overtones'},{id:'tuning',label:'Tuning'},{id:'chords',label:'Chords'},{id:'scope',label:'Scope'}] as tab (tab.id)}<button type="button" role="tab" id={`tab-${tab.id}`} aria-controls={`workspace-${tab.id}`} aria-selected={workspace===tab.id} tabindex={workspace===tab.id?0:-1} onclick={()=>changeWorkspace(tab.id as Workspace)} onkeydown={workspaceKey}>{tab.label}</button>{/each}</div>
 		<div class="header-actions"><a class="icon-button source-link" href="https://github.com/NeoVand/chord" target="_blank" rel="noopener noreferrer" aria-label="View source on GitHub" title="View source on GitHub"><Icon name="github" size={18} /></a><button type="button" class={['midi-button',midiConnected&&'connected']} onclick={connectMidi} title={midiLabel}><Icon name="midi" size={16} /><span>{midiConnected?'MIDI connected':midiLabel}</span>{#if midiConnected}<i></i>{/if}</button><button type="button" class="icon-button" aria-label="Keyboard shortcuts and controls" title="Keyboard shortcuts and controls" onclick={()=>help?.showModal()}><Icon name="info" size={17} /></button><button type="button" class="icon-button" aria-label={immersive?'Show explorer':'Hide explorer'} title={immersive?'Show explorer':'Hide explorer'} aria-pressed={immersive} onclick={()=>immersive=!immersive}><Icon name="panel" size={17} /></button></div>
 	</header>
 	<div class="workspace">
@@ -224,17 +269,19 @@
 			{:else}
 				<div class="interval-pads">{#each INTERVALS as item (item.semitones)}<button type="button" class={selectedInterval===item.semitones?'chosen':''} aria-pressed={selectedInterval===item.semitones} title={item.label} aria-label={`Play ${item.label}`} onclick={(event)=>{playInterval(item.semitones);if(event.detail>0)event.currentTarget.blur();}}>{item.short}</button>{/each}</div><p class="interval-name">{interval.label}<span>{selectedInterval} semitones</span></p>
 			{/if}
-			<div class="explorer-bottom"><span class="tuning-dot"></span><span>Equal temperament</span><span>A4 440 Hz</span></div>
+			<div class="explorer-bottom"><span class="tuning-dot"></span><span>{Object.values(centsByMidi).some((value)=>Math.abs(value)>.01)?'Custom tuning':'Equal temperament'}</span><span>A4 440 Hz</span></div>
 		</aside>
-		<section class="stage-column" aria-label="Waveform visualization">
-			<div class="signal-bar"><div class="signal-switch" aria-label="Sound and signal mode"><button type="button" class={mode==='instrument'?'active':''} aria-pressed={mode==='instrument'} onclick={()=>changeMode('instrument')}><Icon name="keyboard" size={14} />Instrument</button><button type="button" class={mode==='pure'?'active':''} aria-pressed={mode==='pure'} onclick={()=>changeMode('pure')}><Icon name="wave" size={15} />Pure tones</button></div><span class="signal-caption">{mode==='instrument'?'Captured sound, including harmonics.':'Pure sine waves.'}</span><div class="signal-actions">{#if mode==='instrument' && hasPlayed && sounding}<button type="button" class="recapture-button" disabled={captureState==='capturing'} title="Capture a new slice of the sounding instrument" onclick={()=>scope?.recapture()}><Icon name="capture" size={15} /><span>Recapture</span></button>{/if}<button type="button" class="icon-button" aria-label={fullscreenActive?'Exit fullscreen':'Fullscreen visualization'} title={fullscreenActive?'Exit fullscreen':'Fullscreen visualization'} onclick={fullscreen}><Icon name={fullscreenActive?'collapse':'expand'} size={17} /></button></div></div>
+		<section class="stage-column" aria-label="Musical visualization">
+			<div class="signal-bar"><div class="signal-switch" aria-label="Sound and signal mode"><button type="button" class={mode==='instrument'?'active':''} aria-pressed={mode==='instrument'} onclick={()=>changeMode('instrument')}><Icon name="keyboard" size={14} />Instrument</button><button type="button" class={mode==='pure'?'active':''} aria-pressed={mode==='pure'} onclick={()=>changeMode('pure')}><Icon name="wave" size={15} />Pure tones</button></div><span class="signal-caption">{mode==='instrument'?'Captured sound, including harmonics.':'Pure sine waves.'}</span><div class="signal-actions">{#if mode==='instrument' && hasPlayed && audible}<button type="button" class="recapture-button" disabled={workspace==='scope'&&captureState==='capturing'} title="Capture a fresh analysis window" onclick={()=>{scope?.recapture();analysis?.recapture();}}><Icon name="capture" size={15} /><span>Recapture</span></button>{/if}<button type="button" class="icon-button" aria-label={fullscreenActive?'Exit fullscreen':'Fullscreen visualization'} title={fullscreenActive?'Exit fullscreen':'Fullscreen visualization'} onclick={fullscreen}><Icon name={fullscreenActive?'collapse':'expand'} size={17} /></button></div></div>
+			<div class="scope-panel" id="workspace-scope" role="tabpanel" aria-labelledby="tab-scope" hidden={workspace!=='scope'} inert={workspace!=='scope'}>
+			<div class="view-tabs" aria-label="Visualization view">{#each [{id:'waveform',label:'Waveform'},{id:'2d',label:'2D'},{id:'3d',label:'3D'}] as tab (tab.id)}<button type="button" class={view===tab.id?'active':''} aria-pressed={view===tab.id} onclick={()=>changeView(tab.id as PlotView)}>{tab.label}</button>{/each}</div>
 			<div class="plot-stage">
 				<canvas class="scope-canvas" {@attach captureCanvas} aria-label={`${view.toUpperCase()} parametric visualization of ${displayedNotes.map((note)=>note.label).join(', ')||'no active notes'}`}></canvas>
 				<div class="plot-heading"><div class="plot-title-row"><h1>{title}</h1>{#if frozen}<span class="frozen-label">Frozen</span>{/if}</div><div class="axis-notes">{#each displayedNotes as note,i (note.id)}<span style:--axis-color={NOTE_COLORS[i%3]}><b>{view==='waveform'?'~':['X','Y','Z'][i]??'~'}</b>{note.label}<small>{note.frequency.toFixed(1)} Hz</small></span>{/each}</div>{#if plotNotes.length>displayedNotes.length}<p class="axis-overflow">First {displayedNotes.length} of {plotNotes.length} voices plotted</p>{/if}{#if plotNotes.length && missingNotes}<p class="view-hint">Play {missingNotes===1?'one more note':`${missingNotes} more notes`} for a {view==='3d'?'3D':'2D'} curve.</p>{/if}</div>
 				<div class="canvas-status"><i class={captureState==='ready'?'captured':''}></i>{captureLabel}</div>
 				{#if !hasPlayed}<button class="play-preview" type="button" onclick={(event)=>{playPreview();if(event.detail>0)event.currentTarget.blur();}}><span><Icon name="play" size={15} /></span>Play this chord<small>or use the keyboard below</small></button>{:else if !plotNotes.length}<div class="empty-stage"><Icon name="wave" size={30} /><p>Play a note, or choose a chord.</p><button type="button" onclick={playPreview}>Play {tonic} {scaleId==='minor'?'minor':'major'}</button></div>{/if}
-				<div class="trace-inset"><SignalTraces notes={plotNotes} getSamples={()=>scope?.getDisplaySamples()??[]} getProgress={()=>scope?.getTraceProgress()??0} getActivity={()=>scope?.getSignalActivity?.()??0} /></div>
-				<div class="spectrum-inset"><Spectrum getSource={()=>audio?.output??null} /></div>
+				{#if workspace==='scope'}<div class="trace-inset"><SignalTraces notes={plotNotes} getSamples={()=>scope?.getDisplaySamples()??[]} getProgress={()=>scope?.getTraceProgress()??0} getActivity={()=>scope?.getSignalActivity?.()??0} /></div>
+				<div class="spectrum-inset"><Spectrum getSource={()=>audio?.output??null} /></div>{/if}
 			</div>
 			<div class="visual-controls">
 				<div class="motion-controls"><button class={['freeze-button',frozen&&'selected']} type="button" aria-pressed={frozen} disabled={!plotNotes.length&&!frozen} title={frozen?'Resume the sweep and waveform probes':'Pause the sweep, waveform probes, and automatic orbit'} onclick={toggleFreeze}><Icon name={frozen?'play':'freeze'} size={17} />{frozen?'Resume':'Freeze'}</button><button type="button" class={['follow-button',followSound&&'selected']} aria-label="Follow sound" aria-pressed={followSound} title={followSound?'Motion and glow follow audible output. Turn off to replay the capture in silence.':'Free-running capture. Turn on to make motion and glow follow audible output.'} onclick={(event)=>{followSound=!followSound;if(event.detail>0)event.currentTarget.blur();}}><Icon name="wave" size={15} /><span>{followSound?'Follow sound':'Free run'}</span><i></i></button></div>
@@ -245,15 +292,20 @@
 					<div class="zoom-controls" aria-label="Magnification"><button type="button" aria-label="Zoom out" title="Zoom out" onclick={()=>scope?.zoom(.8)}><Icon name="zoom-out" size={14} /></button><output aria-label="Current magnification">{magnification.toFixed(magnification>=10?0:1)}×</output><button type="button" aria-label="Zoom in" title="Zoom in" onclick={()=>scope?.zoom(1.25)}><Icon name="zoom-in" size={14} /></button><button type="button" class="reset-button" aria-label="Fit curve" title="Fit and center the complete curve" onclick={()=>scope?.fitView()}><Icon name="fit" size={14} /><span>Fit</span></button></div>
 				</div>
 			</div>
+			</div>
+			{#if workspace==='overtones'||workspace==='tuning'}
+				<div class="workspace-panel" id={`workspace-${workspace}`} role="tabpanel" aria-labelledby={`tab-${workspace}`}><HarmonyView view={workspace} notes={plotNotes} {spectrum} {title} {frozen} {followSound} speed={harmonicSpeed} {hasPlayed} sounding={audible} getOutputLevel={()=>audio?.getOutputLevel()??0} ontune={tuneNotes} onfreeze={toggleFreeze} onfollow={()=>followSound=!followSound} onspeed={(value)=>harmonicSpeed=value} onplay={playPreview} onstatus={harmonyStatus}/></div>
+			{/if}
+			<div class="workspace-panel atlas-panel" id="workspace-chords" role="tabpanel" aria-labelledby="tab-chords" hidden={workspace!=='chords'} inert={workspace!=='chords'}><ChordAtlas notes={plotNotes} {title} {root} {stopToken} onplay={playAtlas} onstop={stopSound}/></div>
 		</section>
 	</div>
 	<section class="instrument-dock" aria-label="Sound and keyboard">
 		<div class="instrument-toolbar"><div class={['engine-switch',mode==='pure'&&'engine-disabled']} aria-label="Instrument engine" title={mode==='pure'?'Switch to Instrument to choose an engine':'Sound engine'}><button type="button" class={instrumentEngine==='sampled'?'active':''} aria-pressed={instrumentEngine==='sampled'} disabled={mode==='pure'} onclick={()=>changeEngine('sampled')}>Sampled</button><button type="button" class={instrumentEngine==='synth'?'active':''} aria-pressed={instrumentEngine==='synth'} disabled={mode==='pure'} onclick={()=>changeEngine('synth')}>Synth</button></div><VoicePicker value={program} synth={instrumentEngine==='synth'} disabled={mode==='pure'} onchange={changeProgram} /><label class="velocity-control"><span>Velocity</span><select aria-label="Velocity" value={velocity===null?'touch':String(velocity)} onchange={(event)=>velocity=event.currentTarget.value==='touch'?null:Number(event.currentTarget.value)}><option value="touch">Touch dynamics</option><option value="48">Soft · 48</option><option value="96">Medium · 96</option><option value="127">Hard · 127</option></select></label><button type="button" class="toggle-control latch-control" aria-pressed={latch} title="Keep notes sounding after release. Play the same key again to release it." onclick={(event)=>{changeLatch();if(event.detail>0)event.currentTarget.blur();}}><span class={['toggle',latch&&'on']}></span>Latch</button><button type="button" class="stop-button" disabled={!sounding} onclick={stopSound} title="Stop all sound (⌘ / Ctrl + .)" aria-label="Stop all sound"><Icon name="stop" size={13} /><span>Stop</span></button><div class="toolbar-spacer"></div><label class="volume-control"><Icon name="volume" size={16} /><input type="range" aria-label="Volume" min="0" max="1" step="0.01" value={volume} oninput={(event)=>changeVolume(Number(event.currentTarget.value))} /></label><button type="button" class="keys-control" aria-pressed={keysEnabled} title={keysEnabled?'Disable computer keyboard notes':'Enable computer keyboard notes'} onclick={(event)=>{keysEnabled=!keysEnabled;if(event.detail>0)event.currentTarget.blur();}}><Icon name="typing" size={16} /><span>Keys</span><i class={keysEnabled?'enabled':''}></i></button><div class="octave-controls"><span><kbd>Z</kbd> / <kbd>X</kbd></span><button type="button" aria-label="Down an octave" disabled={base<=0} onclick={()=>base=Math.max(0,base-12)}><Icon name="left" size={16} /></button><button type="button" aria-label="Up an octave" disabled={base>=72} onclick={()=>base=Math.min(72,base+12)}><Icon name="right" size={16} /></button></div></div>
 		<PianoKeyboard active={(hasPlayed?liveNotes:previewNotes).map((note)=>note.midi)} scale={pitches} colors={keyColors} {base} {keysEnabled} {velocity} onNoteOn={noteOn} onNoteOff={noteOff} onOctave={(next)=>base=next} />
 	</section>
-	<footer class="status-bar"><span class="engine-status"><i class={audioStatus.state==='loading'?'loading':''}></i>{mode==='pure'?'Pure sine engine':instrumentEngine==='sampled'?'Sampled instruments':'Synth engine'}<span class="footer-divider">/</span>{audioStatus.state==='loading'||audioStatus.state==='fallback'||audioStatus.state==='error'?audioStatus.message:hasPlayed?sounding?`${liveNotes.length} ${liveNotes.length===1?'voice':'voices'}`:'Sound stopped':'Choose a chord to begin'}</span><span class="status-right">{frozen?'Sweep paused':view==='3d'?'Drag to orbit · Shift-drag to pan · Scroll to zoom':'Drag to pan · Scroll to zoom'}<span class="footer-divider">/</span><span class="gpu-status"><i></i>{gpuStatus}</span></span></footer>
+	<footer class="status-bar"><span class="engine-status"><i class={audioStatus.state==='loading'?'loading':''}></i>{mode==='pure'?'Pure sine engine':instrumentEngine==='sampled'?'Sampled instruments':'Synth engine'}<span class="footer-divider">/</span>{audioStatus.state==='loading'||audioStatus.state==='fallback'||audioStatus.state==='error'?audioStatus.message:hasPlayed?sounding?`${liveNotes.length} ${liveNotes.length===1?'voice':'voices'}`:'Sound stopped':'Choose a chord to begin'}</span><span class="status-right">{workspace==='chords'?'Fifths across · Thirds diagonally':workspace!=='scope'?'Drag to explore · Scroll to zoom':frozen?'Sweep paused':view==='3d'?'Drag to orbit · Shift-drag to pan · Scroll to zoom':'Drag to pan · Scroll to zoom'}<span class="footer-divider">/</span><span class="gpu-status"><i></i>{gpuStatus}</span></span></footer>
 	{#if notice}<div class="notice" role="status"><Icon name="info" size={17} /><span>{notice}</span><button type="button" aria-label="Dismiss message" onclick={()=>notice=''}><Icon name="close" size={15} /></button></div>{/if}
-	<dialog class="help-dialog" closedby="any" aria-labelledby="help-title" {@attach captureHelp}><button type="button" class="help-close icon-button" aria-label="Close controls" onclick={()=>help?.close()}><Icon name="close" /></button><h2 id="help-title">A small guide to playing</h2><p>The keyboard, the wheel, and the chord pads all play the same instrument.</p><dl><dt><kbd>A W S E D F…</kbd></dt><dd>Play the labeled keys</dd><dt><kbd>Z</kbd> / <kbd>X</kbd></dt><dd>Move down / up an octave</dd><dt><kbd>⌘</kbd> / <kbd>Ctrl</kbd> + <kbd>.</kbd></dt><dd>Stop all sound</dd><dt>Latch</dt><dd>Keep a note after release. Play it again to remove it. Editing a latched chord with the computer or on-screen keyboard replays its notes together. A chord pad replaces the current notes.</dd><dt>Freeze</dt><dd>Pause the highlight, waveform probes, and automatic orbit. Sound continues.</dd><dt>Stop</dt><dd>Silence every note and keep the last capture. Use Free run to inspect its motion without sound.</dd><dt>Follow sound</dt><dd>Motion and glow follow audible output, including decay and volume. Turn it off for Free run to inspect a captured shape in silence. Freeze pauses either mode.</dd><dt>Sweep speed</dt><dd>Set how many seconds the highlight takes to travel the whole curve.</dd><dt>Zoom &amp; pan</dt><dd>Scroll or pinch to zoom. Drag to pan in 2D and waveform views. In 3D, drag to orbit; Shift-drag or right-drag to pan. Fit centers the complete curve.</dd><dt>Recapture</dt><dd>The instrument curve holds a captured slice of sound. Capture a fresh slice whenever you want.</dd><dt>View</dt><dd>Waveform, 2D and 3D stay selected while you explore. Play at least two notes for 2D or three for 3D.</dd><dt>Instrument / Pure tones</dt><dd>Switch sound and curves together: the full instrument, or just sine waves.</dd></dl><p class="help-footnote">Typing inside controls never plays notes. MIDI pedal input is supported.</p></dialog>
+	<dialog class="help-dialog" closedby="any" aria-labelledby="help-title" {@attach captureHelp}><button type="button" class="help-close icon-button" aria-label="Close controls" onclick={()=>help?.close()}><Icon name="close" /></button><h2 id="help-title">A small guide to playing</h2><p>Four views of one instrument. The keyboard, wheel, chord pads, and lattice share the same notes and sound.</p><dl><dt><kbd>A W S E D F…</kbd></dt><dd>Play the labeled keys</dd><dt><kbd>Z</kbd> / <kbd>X</kbd></dt><dd>Move down / up an octave</dd><dt><kbd>⌘</kbd> / <kbd>Ctrl</kbd> + <kbd>.</kbd></dt><dd>Stop all sound</dd><dt>Latch</dt><dd>Keep a note after release. Play it again to remove it. Editing a latched chord with the computer or on-screen keyboard replays its notes together. A chord pad replaces the current notes.</dd><dt>Freeze</dt><dd>Pause the highlight, waveform probes, and automatic orbit. Sound continues.</dd><dt>Stop</dt><dd>Silence every note and keep the last capture. Use Free run to inspect its motion without sound.</dd><dt>Follow sound</dt><dd>Motion and glow follow audible output, including decay and volume. Turn it off for Free run to inspect a captured shape in silence. Freeze pauses either mode.</dd><dt>Sweep speed</dt><dd>Set how many seconds the highlight takes to travel the whole curve.</dd><dt>Zoom &amp; pan</dt><dd>Scroll or pinch to zoom. Drag to pan in 2D and waveform views. In 3D, drag to orbit; Shift-drag or right-drag to pan. Fit centers the complete curve.</dd><dt>Recapture</dt><dd>Refresh the held instrument curve and measured spectrum from the sound playing now. Replay the selection to capture a new attack.</dd><dt>View</dt><dd>Waveform, 2D and 3D stay selected while you explore. Play at least two notes for 2D or three for 3D.</dd><dt>Workspaces</dt><dd>Overtones compares measured partials. Tuning explores estimated sensory roughness. Chords auditions a fifth/third lattice. Scope keeps the waveform and parametric views.</dd><dt>Fine tuning</dt><dd>Adjust any selected note by up to 50 cents. Equal resets offsets; Just uses simple ratios from the first note. A new chord selection resets tuning. Replay keeps it.</dd><dt>Instrument / Pure tones</dt><dd>Switch sound and curves together: the full instrument, or just sine waves.</dd></dl><p class="help-footnote">Typing inside controls never plays notes. MIDI pedal input is supported.</p></dialog>
 </main>
 
 <style>
@@ -276,4 +328,9 @@
 @media(min-width:701px) and (max-width:1100px){.visual-controls{grid-template-columns:minmax(0,1fr) auto;min-height:96px}.motion-controls{grid-column:1;grid-row:1}.speed-control{grid-column:1;grid-row:2}.trail-control{grid-column:2;grid-row:1}.camera-controls{grid-column:2;grid-row:2}}
 @media(max-width:700px){.stage-column{min-height:540px}.visual-controls{min-height:180px}.motion-controls{grid-column:1/4;grid-row:1;justify-content:space-between}.follow-button{min-height:40px;min-width:124px}.speed-control{grid-column:1/4;grid-row:2;min-height:32px}.trail-control{grid-column:1/4;grid-row:3}.camera-controls{grid-column:1/4;grid-row:4}.immersive .stage-column{min-height:540px}}
 @media(prefers-reduced-motion:reduce){.toggle::after,.chord-pads button{transition:none}.engine-status>i.loading{animation:none}}
+
+.workspace-tabs{display:flex;align-items:center;gap:5px}.workspace-tabs button{border:1px solid transparent;background:none;color:#999;font-size:12px;padding:9px 16px;border-radius:5px;white-space:nowrap}.workspace-tabs button[aria-selected=true]{background:#242424;border-color:#454545;color:#f1f1f1}.workspace-tabs button:hover{color:#eee;background:#1a1a1a}.app-header .brand{min-width:185px}.app-header .brand-caption,.app-header .brand-divider{display:none}.app-header .header-actions{min-width:185px;justify-content:flex-end}.workspace-panel{height:100%;min-height:0;flex:1;min-width:0}.scope-panel{display:flex;flex-direction:column;flex:1;min-height:0;position:relative}.scope-panel[hidden],.atlas-panel[hidden]{display:none}.scope-panel>.view-tabs{position:absolute;top:19px;right:22px;z-index:3;background:#121212bb}.scope-panel .canvas-status{top:74px}.signal-caption{flex:1}.harmony-workspace .stage-column{overflow:hidden}.harmony-workspace .signal-bar{flex-shrink:0}.source-link{color:#aaa}.source-link:hover{color:#fff}
+@media(max-width:1100px){.app-header{gap:15px;padding-inline:20px}.app-header .brand{min-width:100px}.app-header .header-actions{min-width:150px}.workspace-tabs{gap:3px}.workspace-tabs button{padding-inline:11px}.harmony-workspace .workspace{grid-template-columns:230px minmax(0,1fr)}.harmony-workspace .signal-caption{display:none}.scope-panel>.view-tabs{top:16px;right:17px}.scope-panel .plot-heading{top:61px}.scope-panel .canvas-status{top:auto}}
+@media(min-width:701px) and (max-width:900px){.harmony-workspace .workspace{grid-template-columns:185px minmax(0,1fr)}.harmony-workspace .explorer{padding-inline:12px}.harmony-workspace .wheel-wrap{margin-inline:0}.harmony-workspace .scale-selector select{max-width:87px}.harmony-workspace .chord-pads{grid-template-columns:repeat(3,minmax(0,1fr))}.harmony-workspace .explore-detail{display:none}}
+@media(max-width:700px){.app-shell{grid-template-rows:98px auto auto 30px}.app-header{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:45px 44px;gap:0 9px;padding:4px 13px 5px}.app-header .brand{min-width:0}.app-header .header-actions{min-width:0;gap:6px}.workspace-tabs{grid-column:1/-1;grid-row:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;gap:4px}.workspace-tabs button{padding:8px 5px;font-size:12px;min-height:35px}.app-header .source-link{min-width:32px;min-height:36px}.harmony-workspace .stage-column{height:auto;min-height:0;max-height:none;overflow:visible}.harmony-workspace .workspace-panel{height:auto}.harmony-workspace .workspace{display:flex}.harmony-workspace.immersive .stage-column{height:auto;min-height:0}.scope-panel>.view-tabs{top:13px;right:13px}.scope-panel .plot-heading{top:63px}.scope-panel .canvas-status{top:auto}.signal-caption{display:none}.harmony-workspace .explorer{margin-top:0}.scope-panel .play-preview{bottom:24px}}
 </style>
