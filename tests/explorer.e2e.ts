@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 
-const canvas = (page: Page) => page.locator('canvas[aria-label*="visualization"]').first();
+const canvas = (page: Page) => page.locator('.scope-canvas');
 async function load(page: Page, followSound = false) {
 	await page.goto('/');
+	await page.getByRole('tab', { name: 'Scope', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'preview', { timeout: 20_000 });
 	const volume = page.getByRole('slider', { name: 'Volume', exact: true });
 	if (await volume.isVisible()) await volume.fill('0');
@@ -118,7 +119,7 @@ test('opens silently, plays real captured tones, freezes and changes visual spee
 	const errors: string[] = [];
 	page.on('pageerror', (error) => errors.push(error.message));
 	await load(page);
-	await expect(page.getByText(/Silent.*preview/, { exact: true })).toBeVisible();
+	await expect(page.locator('#workspace-scope .canvas-status')).toHaveText(/Silent.*preview/);
 	await page.getByRole('button', { name: 'Pure tones', exact: true }).click();
 	await page.getByRole('button', { name: /Play this chord/ }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
@@ -319,7 +320,7 @@ test('Freeze remains explicit while choosing new chords and comparing signal mod
 	await expect(page.getByText('Sound stopped · Last capture', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Pure tones', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'idle');
-	await expect(page.getByText('Ready to play', { exact: true })).toBeVisible();
+	await expect(page.locator('#workspace-scope').getByText('Ready to play', { exact: true })).toBeVisible();
 	await page.getByRole('group', { name: /Circle of fifths/ }).getByRole('button', { name: 'Play D major', exact: true }).click();
 	await expect(canvas(page)).toHaveAttribute('data-sample-source', 'captured');
 	expect(await visualFrame(page)).toBe(frame);
