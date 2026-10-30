@@ -14,7 +14,9 @@ Latch controls held notes. Freeze controls visual motion. Follow sound gates mot
 
 The page owns a per-instance session: held/physical/pedal note identities, retained and frozen selections, source, program, velocity, volume, tuning offsets, workspace and audition commands. Derived PlotNote.frequency is authoritative. Child components receive immutable snapshots and callbacks; they never create independent audio engines. No module-global reactive session is used.
 
-Plain TypeScript modules implement tuning, spectral peak extraction, pair interactions, roughness, and Tonnetz/voice-leading calculations. These can be tested independently of graphics or Svelte. Heavy analysis and terrain sampling run in workers. The UI receives bounded snapshots, not a stream of reactive PCM arrays.
+The per-instance `InspectionSession` owns the sole PCM history, immutable settled capture, FFT worker and output-following visual clock. Renderers read its frames; a hidden or unavailable renderer has no effect on acquisition, timing or retained notes. Only capture, analysis and audible-state changes enter reactive UI state. PCM and per-frame clock values remain outside Svelte's reactive proxies.
+
+Plain TypeScript modules implement tuning, spectral peak extraction, pair interactions, roughness, and Tonnetz/voice-leading calculations. These can be tested independently of graphics or Svelte. Heavy analysis and terrain sampling run in workers.
 
 ```mermaid
 flowchart LR
@@ -22,8 +24,12 @@ flowchart LR
   Session --> Audio[ChordAudio and isolated voice buses]
   Audio --> Output[Master output and spectrum]
   Audio --> PCM[Versioned AudioWorklet PCM]
-  PCM --> Scope[Stable waveform capture]
-  PCM --> Analysis[Spectral capture and worker]
+  PCM --> Capture[InspectionSession: one immutable window]
+  Capture --> Scope[Scope and miniature waveforms]
+  Capture --> Analysis[Spectral worker: same window]
+  Output --> Clock[Shared sound-following visual clock]
+  Clock --> Scope
+  Clock --> Overtones
   Analysis --> Overtones[Overtone scene and pair inspector]
   Analysis --> Model[Roughness model and worker]
   Model --> Terrain[Interactive tuning surface]
@@ -47,7 +53,7 @@ The atlas uses a true fifth/third lattice and pitch-class triangles. Its transfo
 
 ## Rendering and performance
 
-Use Three.js WebGPU with WebGL fallback for the harmonic and terrain scenes. Keep material and geometry allocations out of the animation loop. Reuse objects, bound pixel ratio, resize through ResizeObserver, and dispose listeners, workers, buffers and renderers. Suspend hidden rendering. Retain Scope's controller/camera and capture state while it is hidden; only its lightweight capture logic continues.
+Use Three.js WebGPU with WebGL fallback for the harmonic and terrain scenes. Keep material and geometry allocations out of the animation loop. Reuse objects, bound pixel ratio, resize through ResizeObserver, and dispose listeners, workers, buffers and renderers. Suspend hidden rendering. Scope and Harmony are retained view components with independent cameras but a common inspection session. Scope samples only the assigned axes at high resolution; miniature waveforms use their own compact cached display data from the same snapshot.
 
 Use semantic SVG for the small interactive Tonnetz and circle so labels, focus targets and keyboard input remain accessible. DOM text supplies inspectors and axes. Reduced motion disables decorative movement; all musical actions remain available through buttons/sliders as well as canvas gestures.
 
@@ -70,11 +76,13 @@ Each coherent stage is committed and pushed after its relevant checks. Prefer me
 
 ## Bringing Scope into the shared instrument
 
-The original Scope needs the same architectural treatment as the newer workspaces. Its renderer must not own audio history, capture readiness or an independent sound-following clock. A per-instance `InspectionSession` will own the PCM history, immutable capture, spectral worker and visual transport. Scope, miniature waveforms, Overtones and Tuning consume that session. The live output spectrum remains a separate, explicitly labelled view of the master output.
+The original Scope has the same architectural treatment as the newer workspaces. Its renderer does not own audio history, capture readiness or an independent sound-following clock. Scope, miniature waveforms, Overtones and Tuning consume `InspectionSession`. The live output spectrum remains a separate, explicitly labelled view of the master output.
 
-The capture publishes enough aligned samples for both the curve and FFT. Recapture, instrument changes and retuning invalidate this shared pipeline once; a stale analysis job cannot replace a newer capture. Freeze and Follow sound have one clock and envelope across workspaces. A renderer can be unavailable or hidden without interrupting acquisition or changing what Stop retains.
+The capture publishes enough aligned samples for both the curve and FFT. Recapture, instrument changes and retuning invalidate this shared pipeline once; a stale analysis job cannot replace a newer capture. During retuning the last complete curve stays visible, explicitly labelled as the previous capture, until its replacement is ready. A decayed recording cannot relabel that old geometry as a newly tuned measurement. Freeze and Follow sound have one clock and envelope across workspaces. A renderer can be unavailable or hidden without interrupting acquisition or changing what Stop retains.
 
-Scope gets its own retained view component and an inspector with explicit X/Y/Z note assignments, shared fine tuning, miniature waveforms and live spectrum. Waveform mode shows all selected voices. Axis choices preserve valid note identities across retuning and fill missing slots when the selection changes. Replay and Recapture are available through the same controls as the harmonic workspaces; small screens keep the inspector reachable.
+Scope has its own retained view component and an inspector with explicit X/Y/Z note assignments, shared fine tuning, miniature waveforms and live spectrum. Waveform mode shows all selected voices. Axis choices preserve valid note identities across retuning and fill missing slots when the selection changes. Replay and Recapture are available through the same controls as the harmonic workspaces; small screens keep the inspector reachable. Replay preserves manually played note identities as well as cents offsets and the selected projection.
+
+Progression playback owns its chord duration even when Latch is off. Stop retains the selected notes regardless of capture or renderer readiness. Capture provenance and audible output are separate UI states. Computer-keyboard focus handling distinguishes pointer-clicked controls from keyboard navigation, protecting forms without disabling notes after switching workspaces.
 
 Follow-up delivery: (1) shared capture/transport contracts and deterministic tests; (2) renderer and Svelte integration, including progression-duration ownership; (3) Scope inspection controls, responsive visibility and cross-workspace regressions; (4) publish and verify the deployed build.
 
