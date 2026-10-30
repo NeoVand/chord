@@ -32,5 +32,7 @@ describe('local roughness model', () => {
 		expect(surface.minimum).toBeGreaterThan(0);
 		expect(surface.maximum).toBeGreaterThan(surface.minimum);
 		expect([...surface.values].every(Number.isFinite)).toBe(true);
+		expect(surface.values[4 * 9 + 4]).toBeCloseTo(roughness(voices), 7);
+		expect(surface.values[2 * 9 + 6]).toBeCloseTo(roughness(voices, [0, 25, -25]), 7);
 	});
 });

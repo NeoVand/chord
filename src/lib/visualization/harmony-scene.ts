@@ -32,7 +32,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		tuning: new THREE.PerspectiveCamera(38, 1, .01, 100)
 	};
 	cameras.overtones.position.set(0, 0, 15);
-	cameras.tuning.position.set(6.4, 5.3, 6.8);
+	cameras.tuning.position.set(7.4, 6.2, 7.8);
 	const controls = {
 		overtones: new OrbitControls(cameras.overtones, canvas),
 		tuning: new OrbitControls(cameras.tuning, canvas)
@@ -92,9 +92,10 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 	const surfaceGroup = new THREE.Group(); scenes.tuning.add(surfaceGroup);
 	const terrainMaterial = ownMaterial(new THREE.MeshStandardNodeMaterial({ roughness: .85, metalness: .16, side: THREE.DoubleSide }));
 	const elevation = positionLocal.y.add(.6).div(2.1).clamp(0, 1);
-	const contour = smoothstep(.025, .065, positionLocal.y.mul(11).fract().sub(.5).abs()).oneMinus();
-	terrainMaterial.colorNode = mix(color('#164b53'), color('#ac6961'), elevation).mul(contour.mul(.4).add(.6));
-	terrainMaterial.emissiveNode = mix(color('#164b53'), color('#92718c'), elevation).mul(contour.mul(.2));
+	const bands = positionLocal.y.mul(14);
+	const contour = smoothstep(bands.fwidth().mul(.5).max(.015), bands.fwidth().mul(1.2).max(.03), bands.fract().sub(.5).abs()).oneMinus();
+	terrainMaterial.colorNode = mix(color('#11181a'), color('#29232a'), elevation);
+	terrainMaterial.emissiveNode = mix(color('#6dc5cb'), color('#bc95c2'), elevation).mul(contour.mul(.6));
 	const terrainGeometry = ownGeometry(new THREE.PlaneGeometry(5, 5, 64, 64)); terrainGeometry.rotateX(-Math.PI / 2);
 	const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial); terrain.visible = false; surfaceGroup.add(terrain);
 	const ambient = new THREE.AmbientLight('#d7e7e8', 2); scenes.tuning.add(ambient);
@@ -107,15 +108,16 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 	const equalMarker = new THREE.Mesh(ownGeometry(new THREE.TorusGeometry(.07, .012, 8, 40)), ownMaterial(new THREE.MeshBasicNodeMaterial({ color: '#b8b8b8' })));
 	equalMarker.rotation.x = -Math.PI / 2; scenes.tuning.add(equalMarker);
 	label('−50¢', new THREE.Vector3(-2.5, -.7, 2.85), scenes.tuning);
-	label('+50¢', new THREE.Vector3(2.5, -.7, 2.85), scenes.tuning);
+	label('+50¢', new THREE.Vector3(2.1, -.7, 2.85), scenes.tuning);
 	label('−50¢', new THREE.Vector3(2.85, -.7, -2.5), scenes.tuning);
-	label('+50¢', new THREE.Vector3(2.85, -.7, 2.5), scenes.tuning);
+	label('+50¢', new THREE.Vector3(2.85, -.7, 2.1), scenes.tuning);
 	label('NOTE 2', new THREE.Vector3(0, -.7, 3.15), scenes.tuning, NOTE_COLORS[1], .28);
 	label('NOTE 3', new THREE.Vector3(3.15, -.7, 0), scenes.tuning, NOTE_COLORS[2], .28);
 
 	let disposed = false, frame = 0, lastTime = performance.now(), clock = 0, lastKey = '', lastPair = '', view = '';
 	let width = 1, height = 1;
 	let surface: RoughnessSurface | null = null, surfaceKey = '', requestedKey = '', requestTimer: ReturnType<typeof setTimeout> | undefined;
+	let surfaceRevisionSeen = -1;
 	const worker = new Worker(new URL('../harmony/roughness.worker.ts', import.meta.url), { type: 'module' });
 	worker.onmessage = ({ data }: MessageEvent<{ key: string; surface: RoughnessSurface }>) => {
 		if (disposed || data.key !== requestedKey) return;
@@ -145,7 +147,8 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		for (const object of [...group.children]) {
 			group.remove(object);
 			const geometry = (object as THREE.Mesh).geometry;
-			if (geometry && geometry !== sphere) { geometry.dispose(); geometries.delete(geometry); }
+			// Sprites share Three.js's global quad. Only dispose geometry we own.
+			if (geometry && geometry !== sphere && geometries.has(geometry)) { geometry.dispose(); geometries.delete(geometry); }
 		}
 	}
 	let pickable: THREE.Mesh[] = [], pairs: PartialPair[] = [];
@@ -196,7 +199,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		marker.visible = markerHalo.visible = equalMarker.visible = true;
 		const voices: VoiceSpectrum[] = state.spectrum.voices.map((voice, lane) => {
 			const offset = lane === 1 || lane === 2 ? centsOffset(voice.note) : 0;
-			return { ...voice, partials: voice.partials.map((partial) => ({ ...partial, frequency: partial.frequency / 2 ** (offset / 1200) })) };
+			return { ...voice, note: { ...voice.note }, partials: voice.partials.map((partial) => ({ ...partial, frequency: partial.frequency / 2 ** (offset / 1200) })) };
 		});
 		// Normalize out the two live tuning axes so pointer moves only move the marker.
 		const key = voices.map((voice) => `${voice.id}:${voice.partials.map((partial) => `${partial.frequency.toFixed(1)},${partial.amplitude.toFixed(3)}`).join(';')}`).join('|');
@@ -217,7 +220,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 	function fit() {
 		const current = options.getState().view;
 		if (current === 'overtones') { cameras.overtones.zoom = 1; cameras.overtones.position.set(0, 0, 15); controls.overtones.target.set(0, 0, 0); cameras.overtones.updateProjectionMatrix(); }
-		else { cameras.tuning.position.set(6.4, 5.3, 6.8); controls.tuning.target.set(0, .25, 0); }
+		else { cameras.tuning.position.set(7.4, 6.2, 7.8); controls.tuning.target.set(0, .25, 0); }
 		controls[current].update();
 	}
 	const raycaster = new THREE.Raycaster();
@@ -254,6 +257,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 	}
 	canvas.addEventListener('pointerdown', down, true); canvas.addEventListener('pointermove', move, true); canvas.addEventListener('pointerup', up, true); canvas.addEventListener('pointercancel', up, true);
 	const activity = new SoundActivity();
+	let displayedEnvelope = 0;
 	function animate(now: number) {
 		if (disposed) return;
 		frame = requestAnimationFrame(animate);
@@ -266,7 +270,8 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 		activity.update(options.getOutputLevel(), dt);
 		const moving = !state.frozen && (!state.followSound || activity.audible);
 		if (moving) clock += dt * state.speed;
-		const envelope = state.followSound ? activity.level : 1;
+		if (!state.frozen) displayedEnvelope = state.followSound ? activity.level : 1;
+		const envelope = displayedEnvelope;
 		for (const material of glowMaterials) material.opacity = .27 + envelope * .3;
 		if (view === 'overtones') {
 			updatePair(state);
@@ -278,7 +283,7 @@ export async function createHarmonyScene(canvas: HTMLCanvasElement, options: Har
 				pairMaterial.opacity = .35 + .3 * (.5 + .5 * Math.cos(TAU * beatPhase)) * envelope;
 			}
 		} else {
-			requestSurface(state);
+			if (surfaceRevisionSeen !== state.spectrum.revision) { surfaceRevisionSeen = state.spectrum.revision; requestSurface(state); }
 			if (state.notes.length >= 3) {
 				const x = centsOffset(state.notes[1]) / 20, z = centsOffset(state.notes[2]) / 20;
 				marker.position.set(x, sampleHeight(x, z) + .08, z); markerHalo.position.copy(marker.position);
